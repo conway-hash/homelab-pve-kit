@@ -50,3 +50,24 @@ pve_repositories:
     uris: http://download.proxmox.com/debian/pve
     components: [pve-no-subscription]
     enabled: true
+
+# ── Kiosk dashboard on the physically attached monitor ───────────────
+#
+# The screen is wired to this box, so the compositor and browser have to
+# run here — a guest can't drive it without GPU passthrough, which would
+# take the console away and buy nothing. The *data* is all local anyway.
+kiosk_enabled: true
+
+# Localhost only. Nothing about this is meant to be reachable off-box, so
+# the port never leaves 127.0.0.1 and no firewall rule is needed.
+kiosk_port: 8099
+kiosk_dir: /opt/kiosk
+
+# How often the collector rewrites data.json. The page polls at the same
+# rate. 10s is well under any dashboard's attention span and costs three
+# cheap local commands.
+kiosk_refresh_seconds: 10
+
+# The Proxmox node name pvesh is queried for — not necessarily the same
+# string as the tailnet hostname, though here they both happen to be "pve".
+pve_node: pve

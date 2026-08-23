@@ -25,6 +25,31 @@ never been touched:
 | `pve_repos` | Disables the enterprise + Ceph repos, enables `pve-no-subscription`. **First**, because out of the box the enterprise repo is on with no subscription and every `apt` call 401s until this runs. |
 | `tailscale` | Installs and joins the tailnet. Not Proxmox-specific — guests reuse it as-is. |
 | `pve_host` | `sudo` (Proxmox doesn't ship it), unattended upgrades with **no automatic reboot**, Tailscale added to the allowed origins, and `package-updates=always`. |
+| `pve_kiosk` | Drives the monitor physically attached to the box: host metrics, guests, pending updates, and a live tailnet graph. |
+
+### The kiosk
+
+The screen is wired to this machine, so the compositor and browser run
+here — a guest can't reach it without GPU passthrough, which would take
+the host console with it. Nothing is served off-box:
+
+```
+kiosk-data.timer  → collect.sh every 10s → /opt/kiosk/data.json
+kiosk-web.service → python3 http.server, bound to 127.0.0.1 only
+tty1 (autologin)  → cage -- cog http://127.0.0.1:8099/   (|| btop)
+```
+
+`cog`, not chromium: Debian's chromium pulls 174 packages onto a
+hypervisor, and even with recommends disabled still installs
+`cups-common`, `system-config-printer` and `upower`. `cog` is WebKit built
+for kiosks and adds no daemons.
+
+The tailnet graph draws this node's own link to each peer — solid for
+direct, dashed through a relay bubble for DERP, grey for offline. It's a
+hub, not a mesh, because a node can only observe its own connections.
+
+If cage or cog fails to start, tty1 falls through to `btop`, so the screen
+never goes blank.
 
 Written to converge a **stock Proxmox install**, not just one that's
 already been set up by hand. Everything is idempotent — a second run is

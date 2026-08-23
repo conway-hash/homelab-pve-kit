@@ -19,6 +19,7 @@
     - pve_repos
     - tailscale
     - pve_host
+    - pve_kiosk
 
 # Guests live below this line. The pattern, when the first one lands:
 #

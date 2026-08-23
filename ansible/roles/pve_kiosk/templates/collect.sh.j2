@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Managed by Ansible (pve_kiosk) — edits will be overwritten
+#
+# Writes one JSON blob for the dashboard to poll. Everything here is read
+# locally; nothing is sent anywhere.
+set -euo pipefail
+
+OUT="{{ kiosk_dir }}/data.json"
+TMP="$(mktemp "{{ kiosk_dir }}/.data.XXXXXX.json")"
+trap 'rm -f "$TMP"' EXIT
+
+# Each source is allowed to fail independently — a wedged tailscaled
+# shouldn't blank the VM panel, and vice versa. jq -n with a null argjson
+# lets the page decide what to render as "unavailable".
+grab() { "$@" 2>/dev/null || echo 'null'; }
+
+HOST=$(grab pvesh get /nodes/{{ pve_node }}/status --output-format json)
+GUESTS=$(grab pvesh get /nodes/{{ pve_node }}/qemu --output-format json)
+LXC=$(grab pvesh get /nodes/{{ pve_node }}/lxc --output-format json)
+TAILNET=$(grab tailscale status --json)
+
+# Ties the panel to the update automation this repo already configures.
+UPDATES=$(apt list --upgradable 2>/dev/null | tail -n +2 | grep -c . || true)
+
+jq -n \
+  --arg     generated "$(date -Is)"                     \
+  --arg     node      "{{ pve_node }}"                  \
+  --argjson host      "${HOST:-null}"                   \
+  --argjson guests    "${GUESTS:-null}"                 \
+  --argjson lxc       "${LXC:-null}"                    \
+  --argjson tailnet   "${TAILNET:-null}"                \
+  --argjson updates   "${UPDATES:-0}"                   \
+  '{generated:$generated, node:$node, host:$host, guests:$guests, lxc:$lxc, tailnet:$tailnet, updates:$updates}' \
+  > "$TMP"
+
+# Atomic swap: the page must never fetch a half-written file.
+mv "$TMP" "$OUT"
+chmod 0644 "$OUT"
+trap - EXIT

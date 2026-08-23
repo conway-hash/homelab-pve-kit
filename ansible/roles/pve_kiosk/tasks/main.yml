@@ -1,0 +1,122 @@
+---
+# Drives the monitor physically attached to this box. The compositor and
+# browser have to run here — a guest can't reach that screen without GPU
+# passthrough, which would hand the card to the VM and take the host
+# console with it. The data is all local anyway, so nothing is gained by
+# moving it off.
+
+- name: Install the kiosk stack
+  # cage is a single-purpose Wayland compositor: it runs exactly one
+  # fullscreen client, with no desktop, panel, or launcher.
+  #
+  # cog, not chromium. Debian's chromium pulls a desktop's worth of
+  # dependencies onto what is meant to be a hypervisor — 174 packages with
+  # recommends, and even with them off it still drags cups-common,
+  # system-config-printer and upower. cog is WebKit built for exactly this
+  # job and adds no daemons at all.
+  #
+  # install_recommends: false matters here; chromium's numbers above were
+  # what made this worth measuring rather than assuming.
+  ansible.builtin.apt:
+    name:
+      - cage
+      - cog
+      - jq
+      - fonts-dejavu-core
+    state: present
+    install_recommends: false
+
+- name: Create the kiosk directory
+  ansible.builtin.file:
+    path: "{{ kiosk_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the data collector
+  ansible.builtin.template:
+    src: collect.sh.j2
+    dest: "{{ kiosk_dir }}/collect.sh"
+    owner: root
+    group: root
+    mode: "0755"
+    validate: bash -n %s
+  notify: Restart kiosk data timer
+
+- name: Install the dashboard page
+  ansible.builtin.template:
+    src: index.html.j2
+    dest: "{{ kiosk_dir }}/index.html"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - kiosk-data.service
+    - kiosk-data.timer
+    - kiosk-web.service
+  notify: Reload systemd
+
+- name: Reload systemd before enabling anything it has not seen yet
+  ansible.builtin.meta: flush_handlers
+
+- name: Produce a first data.json before the browser asks for one
+  # Without this the page's first fetch 404s and the panels sit empty
+  # until the timer's OnBootSec elapses — which looks broken on a screen
+  # someone is standing in front of.
+  ansible.builtin.command: "{{ kiosk_dir }}/collect.sh"
+  args:
+    creates: "{{ kiosk_dir }}/data.json"
+
+- name: Enable the collector timer and the local web server
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - kiosk-data.timer
+    - kiosk-web.service
+
+- name: Point tty1 at the kiosk instead of btop
+  # tty1 already autologins root and runs btop from .bash_profile; this
+  # replaces what that line launches, keeping the same mechanism.
+  #
+  # Deliberately NOT `exec cage`: if cage or chromium fails to start, the
+  # shell falls through to btop and the monitor still shows something
+  # useful instead of a bare prompt or a black screen.
+  ansible.builtin.blockinfile:
+    path: /root/.bash_profile
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+    marker: "# {mark} ANSIBLE MANAGED — pve_kiosk"
+    block: |
+      if [ "$(tty)" = "/dev/tty1" ]; then
+          cage -- cog "http://127.0.0.1:{{ kiosk_port }}/" || btop
+      fi
+  when: kiosk_enabled | bool
+
+- name: Remove the old bare btop autostart
+  # It lived outside the managed block, so it would otherwise still run
+  # first and the kiosk would never launch until btop was quit.
+  ansible.builtin.blockinfile:
+    path: /root/.bash_profile
+    marker: "# {mark} pre-kiosk btop"
+    state: absent
+  when: kiosk_enabled | bool
+
+- name: Strip the unmanaged btop stanza from .bash_profile
+  ansible.builtin.replace:
+    path: /root/.bash_profile
+    regexp: '(?m)^\s*if \[ "\$\(tty\)" = "/dev/tty1" \]; then\n\s*btop\n\s*fi\s*$'
+    replace: ''
+  when: kiosk_enabled | bool

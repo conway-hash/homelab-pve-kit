@@ -1,0 +1,225 @@
+<!doctype html>
+<!-- Managed by Ansible (pve_kiosk) — edits will be overwritten -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ pve_node }}</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --line:#232c38;
+    --fg:#e6edf3; --dim:#8b98a5;
+    --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#58a6ff;
+    --relay:#d29922;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--fg); overflow:hidden;
+    font:14px/1.4 ui-monospace,"DejaVu Sans Mono",monospace;
+    /* A kiosk has no pointer. Hide it so a stray bump doesn't leave an
+       arrow parked in the middle of the screen forever. */
+    cursor:none;
+  }
+  #grid{
+    height:100vh; display:grid; gap:10px; padding:10px;
+    grid-template-columns:minmax(300px,1fr) 1.6fr;
+    grid-template-rows:auto 1fr auto;
+    grid-template-areas:"head head" "stats graph" "guests graph";
+  }
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;overflow:hidden}
+  h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-bottom:10px;font-weight:600}
+
+  #head{grid-area:head;display:flex;align-items:center;gap:18px}
+  #node{font-size:26px;font-weight:700;letter-spacing:.04em}
+  #clock{font-size:26px;font-weight:700;margin-left:auto;font-variant-numeric:tabular-nums}
+  .chip{padding:3px 10px;border-radius:99px;font-size:12px;border:1px solid var(--line);color:var(--dim)}
+  .chip.on{color:var(--ok);border-color:var(--ok)}
+  .chip.warn{color:var(--warn);border-color:var(--warn)}
+  .chip.bad{color:var(--bad);border-color:var(--bad)}
+
+  #stats{grid-area:stats}
+  .metric{margin-bottom:14px}
+  .metric .row{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px}
+  .metric .row span:last-child{color:var(--dim);font-variant-numeric:tabular-nums}
+  .bar{height:7px;background:#0b0e13;border-radius:4px;overflow:hidden}
+  .bar>i{display:block;height:100%;background:var(--accent);transition:width .6s ease}
+  .bar>i.warn{background:var(--warn)} .bar>i.bad{background:var(--bad)}
+
+  #guests{grid-area:guests;overflow-y:auto}
+  .g{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)}
+  .g:last-child{border-bottom:0}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--bad);flex:none}
+  .dot.run{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .g .nm{font-weight:600} .g .id{color:var(--dim);font-size:11px}
+  .g .rt{margin-left:auto;color:var(--dim);font-size:11px;text-align:right;font-variant-numeric:tabular-nums}
+
+  #graph{grid-area:graph;display:flex;flex-direction:column}
+  svg{flex:1;width:100%}
+  .edge{stroke:var(--ok);stroke-width:1.6;opacity:.55}
+  .edge.relay{stroke:var(--relay);stroke-dasharray:5 4;opacity:.65}
+  .edge.off{stroke:var(--line);opacity:.35}
+  .nlabel{fill:var(--fg);font-size:11px;text-anchor:middle}
+  .nsub{fill:var(--dim);font-size:9px;text-anchor:middle}
+  #legend{display:flex;gap:16px;font-size:11px;color:var(--dim);padding-top:6px}
+  #legend i{display:inline-block;width:18px;height:0;border-top:2px solid;vertical-align:middle;margin-right:5px}
+  #stale{position:fixed;inset:0;background:rgba(14,17,22,.82);display:none;
+         align-items:center;justify-content:center;font-size:20px;color:var(--warn)}
+</style>
+</head>
+<body>
+<div id="grid">
+  <div id="head" class="panel">
+    <div id="node">…</div>
+    <div class="chip" id="uptime">uptime —</div>
+    <div class="chip" id="updates">updates —</div>
+    <div class="chip" id="tsstate">tailnet —</div>
+    <div id="clock">--:--:--</div>
+  </div>
+
+  <div id="stats" class="panel">
+    <h2>Host</h2>
+    <div id="metrics"></div>
+    <div style="color:var(--dim);font-size:11px" id="cpumodel"></div>
+  </div>
+
+  <div id="guests" class="panel">
+    <h2>Guests</h2>
+    <div id="glist"></div>
+  </div>
+
+  <div id="graph" class="panel">
+    <h2>Tailnet</h2>
+    <svg id="svg" viewBox="0 0 600 460" preserveAspectRatio="xMidYMid meet"></svg>
+    <div id="legend">
+      <span><i style="border-color:var(--ok)"></i>direct</span>
+      <span><i style="border-color:var(--relay);border-top-style:dashed"></i>relayed (DERP)</span>
+      <span><i style="border-color:var(--line)"></i>offline</span>
+    </div>
+  </div>
+</div>
+<div id="stale">data is stale — collector not running?</div>
+
+<script>
+const REFRESH = {{ kiosk_refresh_seconds }} * 1000;
+const SVGNS = "http://www.w3.org/2000/svg";
+const $ = id => document.getElementById(id);
+
+const pct  = (u,t) => (!t || t<=0) ? 0 : Math.min(100, (u/t)*100);
+const gib  = b => (b/1073741824).toFixed(1) + "G";
+const cls  = p => p>=90 ? "bad" : p>=70 ? "warn" : "";
+function dur(s){
+  s = Math.floor(s||0);
+  const d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+}
+function bar(label, val, p){
+  return `<div class="metric"><div class="row"><span>${label}</span><span>${val}</span></div>
+          <div class="bar"><i class="${cls(p)}" style="width:${p.toFixed(1)}%"></i></div></div>`;
+}
+
+function el(tag, attrs){
+  const n = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  return n;
+}
+
+function drawTailnet(ts){
+  const svg = $("svg");
+  svg.replaceChildren();
+  if (!ts || !ts.Self){
+    svg.append(Object.assign(el("text",{x:300,y:230,class:"nsub"}),{textContent:"tailscale data unavailable"}));
+    return;
+  }
+  const self  = ts.Self;
+  const peers = Object.values(ts.Peer || {});
+  const cx=300, cy=225, R=155;
+
+  // Self at the centre, peers evenly around it. A hub layout, not a real
+  // mesh — every edge drawn is this node's own link to that peer, which is
+  // the only connection state this machine can actually observe.
+  peers.forEach((p,i) => {
+    const a = (i / peers.length) * 2*Math.PI - Math.PI/2;
+    const x = cx + R*Math.cos(a), y = cy + R*Math.sin(a);
+    const relayed = !!p.Relay && !p.CurAddr;
+    const k = !p.Online ? "off" : relayed ? "relay" : "";
+    svg.append(el("line",{x1:cx,y1:cy,x2:x,y2:y,class:"edge "+k}));
+
+    if (p.Online && relayed){
+      const mx=(cx+x)/2, my=(cy+y)/2;
+      svg.append(el("circle",{cx:mx,cy:my,r:9,fill:"var(--panel)",stroke:"var(--relay)","stroke-width":1}));
+      svg.append(Object.assign(el("text",{x:mx,y:my+3,class:"nsub",fill:"var(--relay)"}),{textContent:p.Relay}));
+    }
+    svg.append(el("circle",{cx:x,cy:y,r:15,
+      fill: p.Online ? "var(--ok)" : "var(--line)",
+      "fill-opacity": p.Online ? .18 : .5,
+      stroke: p.Online ? "var(--ok)" : "var(--dim)", "stroke-width":1.6}));
+    const nm = (p.HostName||"?").slice(0,16);
+    svg.append(Object.assign(el("text",{x, y:y+31, class:"nlabel"}),{textContent:nm}));
+    svg.append(Object.assign(el("text",{x, y:y+43, class:"nsub"}),
+      {textContent: p.Online ? (relayed ? "relay "+p.Relay : "direct") : "offline"}));
+  });
+
+  svg.append(el("circle",{cx,cy,r:26,fill:"var(--accent)","fill-opacity":.16,stroke:"var(--accent)","stroke-width":2}));
+  svg.append(Object.assign(el("text",{x:cx,y:cy+4,class:"nlabel",fill:"var(--accent)"}),
+    {textContent:(self.HostName||"self").slice(0,12)}));
+}
+
+function render(d){
+  $("node").textContent = d.node || "?";
+
+  const h = d.host;
+  if (h){
+    const mp = pct(h.memory?.used, h.memory?.total);
+    const rp = pct(h.rootfs?.used, h.rootfs?.total);
+    const cp = (h.cpu||0)*100;
+    $("metrics").innerHTML =
+      bar("cpu", cp.toFixed(1)+"%", cp) +
+      bar("memory", `${gib(h.memory?.used)} / ${gib(h.memory?.total)}`, mp) +
+      bar("rootfs", `${gib(h.rootfs?.used)} / ${gib(h.rootfs?.total)}`, rp) +
+      `<div class="metric"><div class="row"><span>load</span><span>${(h.loadavg||[]).join("  ")}</span></div></div>`;
+    $("cpumodel").textContent = `${h.cpuinfo?.cpus||"?"} cores · ${(h.cpuinfo?.model||"").slice(0,42)}`;
+    $("uptime").textContent = "uptime " + dur(h.uptime);
+  }
+
+  const all = [ ...(d.guests||[]).map(g=>({...g,kind:"vm"})),
+                ...(d.lxc||[]).map(g=>({...g,kind:"ct"})) ]
+              .sort((a,b)=>a.vmid-b.vmid);
+  $("glist").innerHTML = all.length ? all.map(g => {
+    const run = g.status === "running";
+    return `<div class="g"><span class="dot ${run?"run":""}"></span>
+      <span class="nm">${g.name||"—"}</span><span class="id">${g.kind} ${g.vmid}</span>
+      <span class="rt">${run ? dur(g.uptime)+" · "+gib(g.mem)+"/"+gib(g.maxmem) : g.status}</span></div>`;
+  }).join("") : `<div style="color:var(--dim)">no guests</div>`;
+
+  const u = d.updates|0;
+  const uc = $("updates");
+  uc.textContent = u ? `${u} update${u>1?"s":""}` : "up to date";
+  uc.className = "chip " + (u>0 ? "warn" : "on");
+
+  const st = $("tsstate");
+  const state = d.tailnet?.BackendState || "unknown";
+  st.textContent = "tailnet " + state.toLowerCase();
+  st.className = "chip " + (state === "Running" ? "on" : "bad");
+
+  drawTailnet(d.tailnet);
+
+  // The collector writing data.json is a separate unit from the one
+  // serving it. If the timer dies the page would otherwise sit there
+  // showing convincing, frozen numbers — say so instead.
+  const age = (Date.now() - new Date(d.generated).getTime())/1000;
+  $("stale").style.display = age > REFRESH/1000 * 4 ? "flex" : "none";
+}
+
+async function tick(){
+  try{
+    const r = await fetch("data.json?t=" + Date.now(), {cache:"no-store"});
+    if (r.ok) render(await r.json());
+  }catch(e){ /* next tick retries; a blank panel is worse than a stale one */ }
+}
+
+setInterval(() => $("clock").textContent = new Date().toLocaleTimeString(), 1000);
+tick();
+setInterval(tick, REFRESH);
+</script>
+</body>
+</html>
