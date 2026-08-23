@@ -63,10 +63,23 @@ jobs:
         # own, which is a different scope from the non-ephemeral key a
         # permanent machine joins with. Don't reuse one for the other.
         run: |
+          # `tailscale up` with an empty authkey does not fail — it prints a
+          # login URL and BLOCKS waiting for a human, burning the whole job
+          # timeout. Fail fast and name the fix instead.
+          if [ -z "${{ secrets.TS_AUTHKEY }}" ]; then
+            echo "::error::TS_AUTHKEY is not set. Mint an ephemeral+reusable Headscale pre-auth key and add it as a repo secret — see SETUP.md step 4."
+            exit 1
+          fi
+          if [ -z "${{ secrets.PVE_SSH_PRIVATE_KEY }}" ]; then
+            echo "::error::PVE_SSH_PRIVATE_KEY is not set — see SETUP.md step 4."
+            exit 1
+          fi
+
           curl -fsSL https://tailscale.com/install.sh | sh
           LOGIN=$(grep '^headscale_server_url:' group_vars/all/vars.yml \
             | sed 's/^headscale_server_url:[[:space:]]*//; s/[[:space:]]*#.*$//')
           sudo tailscale up \
+            --timeout=60s \
             --login-server="$LOGIN" \
             --authkey="${{ secrets.TS_AUTHKEY }}" \
             --hostname="gh-runner-${GITHUB_RUN_ID}" \
