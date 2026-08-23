@@ -130,3 +130,14 @@ jobs:
           fi
 
           exit $FAILED
+
+      # Without this the runner just vanishes and headscale waits out
+      # ephemeral.inactivity_timeout (30m) before reaping the node — which
+      # leaves a dead entry holding a tailnet IP for half an hour after
+      # every deploy. Logging out makes headscale drop it immediately.
+      # always(), so a failed deploy doesn't leave one behind either.
+      - name: Leave the tailnet
+        if: always()
+        run: |
+          sudo tailscale logout \
+            || echo "::warning::tailscale logout failed; headscale will reap this node after its inactivity timeout"
