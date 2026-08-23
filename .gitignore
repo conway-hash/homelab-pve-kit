@@ -1,0 +1,11 @@
+# Ansible
+ansible/inventory/hosts.ini
+ansible/group_vars/*/secrets.yml
+ansible/*.retry
+
+# Rendered on a host, never meant to live in git even locally
+**/.env
+
+# OS / editor cruft
+.DS_Store
+*.swp

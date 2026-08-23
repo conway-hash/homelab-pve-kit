@@ -1,0 +1,76 @@
+---
+- name: Confirm this is actually a Proxmox host
+  # Cheap guard against a fat-fingered --limit pointing this role at a
+  # plain Debian box, where the pvesh task below would fail confusingly
+  # halfway through instead of up front.
+  ansible.builtin.stat:
+    path: /usr/bin/pvesh
+  register: pvesh_bin
+  failed_when: not pvesh_bin.stat.exists
+
+- name: Install sudo
+  # Proxmox's ISO install does not ship sudo, so the ci-deploy account's
+  # /etc/sudoers.d entry is inert until something installs it — found the
+  # hard way on the live box.
+  #
+  # This task CANNOT bootstrap that: `become: true` needs sudo to already
+  # exist in order to run this at all. SETUP.md step 1 installs it by
+  # hand, and this task only keeps it installed afterwards. Removing sudo
+  # from the host locks this playbook out until you fix it manually.
+  ansible.builtin.apt:
+    name: sudo
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install unattended-upgrades
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+
+- name: Enable periodic package-list refresh and unattended upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      // Managed by Ansible (pve_host) — edits will be overwritten
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add extra unattended-upgrade origins
+  ansible.builtin.template:
+    src: 52-homelab-unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/52-homelab-unattended-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+    # A malformed apt.conf breaks EVERY apt invocation on the box,
+    # including the ones that would fix it. Parse it before it lands.
+    validate: apt-config -c %s dump
+
+# ── Update notifications ─────────────────────────────────────────────
+# No endpoint or matcher is configured here on purpose. Proxmox ships a
+# built-in mail-to-root target that delivers via local sendmail to root's
+# mailbox on this box — no credentials, no external service. The only
+# thing missing is the policy flag below.
+#
+# Proxmox has no in-UI notification inbox; the closest thing is the
+# Node -> Updates panel, which lists pending packages with no config at
+# all. Real push delivery (ntfy/Gotify webhook endpoint + matcher) gets
+# added here once a notification service exists to point at.
+
+- name: Read the current cluster notification policy
+  ansible.builtin.command: pvesh get /cluster/options --output-format json
+  register: pve_cluster_options
+  changed_when: false
+
+- name: Set the package-updates notification policy
+  ansible.builtin.command: >-
+    pvesh set /cluster/options
+    --notify package-updates={{ pve_notify_package_updates }}
+  vars:
+    _notify: "{{ (pve_cluster_options.stdout | from_json).notify | default('') }}"
+  when: "'package-updates=' ~ pve_notify_package_updates not in _notify"
+  changed_when: true

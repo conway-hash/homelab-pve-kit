@@ -1,0 +1,14 @@
+// Managed by Ansible ({{ ansible_role_name | default('pve_host') }}) — edits will be overwritten.
+//
+// A DROP-IN, deliberately: Debian ships its own
+// /etc/apt/apt.conf.d/50unattended-upgrades, and APT config lists APPEND
+// across files rather than replacing. So this file adds origins without
+// this repo ever having to own, diff, or re-merge the vendor file when
+// Debian changes it.
+{% if unattended_extra_origins | length > 0 %}
+Unattended-Upgrade::Origins-Pattern {
+{% for origin in unattended_extra_origins %}
+    "{{ origin }}";
+{% endfor %}
+};
+{% endif %}

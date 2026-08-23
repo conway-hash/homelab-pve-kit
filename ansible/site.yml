@@ -1,0 +1,21 @@
+---
+# One play per host group. Adding a service later means adding a play here
+# and a roles/svc_<name>/ role — never a new workflow file, because CI
+# matrixes over the groups in this file.
+
+- name: Converge the Proxmox hypervisor
+  hosts: pve_host
+  become: true
+  gather_facts: true
+
+  roles:
+    - pve_host
+
+# Guests live below this line. The pattern, when the first one lands:
+#
+# - name: Converge the Obsidian sync server
+#   hosts: obsidian
+#   become: true
+#   roles:
+#     - common          # tailnet join, unattended-upgrades, docker
+#     - svc_obsidian    # the service itself, self-contained

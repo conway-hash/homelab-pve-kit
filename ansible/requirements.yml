@@ -1,0 +1,7 @@
+---
+# Real Ansible Galaxy collections only. Shared logic in this repo lives as
+# ordinary local roles under ansible/roles/, referenced by bare name — no
+# git-collection sources, no private namespace.
+collections:
+  - name: ansible.posix
+    version: ">=1.5.0"

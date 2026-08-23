@@ -1,0 +1,13 @@
+---
+# Intentionally empty.
+#
+# This file holds ONLY vars with no safe default — secrets and
+# required-but-unset values, each declared as "" with an
+# ansible.builtin.assert in tasks/main.yml that refuses to deploy without
+# them. It never restates a value that already lives in group_vars/, which
+# would be the same fact declared twice.
+#
+# Right now this role has no secrets at all: notifications go to the local
+# root mailbox via Proxmox's built-in mail-to-root target, so there are no
+# SMTP credentials to hold. The first secret this role needs goes here,
+# with its assert.

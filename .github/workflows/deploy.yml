@@ -1,0 +1,115 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ansible/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-pve
+  cancel-in-progress: false
+
+jobs:
+  # The matrix is derived from site.yml's own `hosts:` lines rather than
+  # hardcoded here. Adding a service means adding a play in site.yml and a
+  # roles/svc_<name>/ role — this workflow file is never touched again.
+  groups:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: detect
+        run: |
+          MATRIX=$(grep -E '^[[:space:]]+hosts:' ansible/site.yml \
+            | sed 's/.*hosts:[[:space:]]*//' \
+            | jq -R . | jq -sc .)
+          if [ "$MATRIX" = "[]" ]; then
+            echo "::error::No host groups found in ansible/site.yml"
+            exit 1
+          fi
+          echo "Deploying to: $MATRIX"
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: groups
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        host: ${{ fromJson(needs.groups.outputs.matrix) }}
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Ansible + collections
+        run: |
+          pipx install --include-deps ansible
+          ansible-galaxy collection install -r requirements.yml
+
+      - name: Join the tailnet
+        # These hosts sit on a home LAN with no public address — the only
+        # way in is the tailnet itself. The key must be ephemeral and
+        # reusable: this node is a throwaway that should disappear on its
+        # own, which is a different scope from the non-ephemeral key a
+        # permanent machine joins with. Don't reuse one for the other.
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+          LOGIN=$(grep '^headscale_server_url:' group_vars/all/vars.yml \
+            | sed 's/^headscale_server_url:[[:space:]]*//; s/[[:space:]]*#.*$//')
+          sudo tailscale up \
+            --login-server="$LOGIN" \
+            --authkey="${{ secrets.TS_AUTHKEY }}" \
+            --hostname="gh-runner-${GITHUB_RUN_ID}" \
+            --accept-dns=true
+          tailscale status
+
+      - name: Write the deploy SSH key
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.PVE_SSH_PRIVATE_KEY }}" > ~/.ssh/homelab_ci_deploy
+          chmod 600 ~/.ssh/homelab_ci_deploy
+
+      - name: Write the inventory
+        run: |
+          cp inventory/hosts.ini.example inventory/hosts.ini
+          mkdir -p /tmp/ansible-cp
+
+      - name: Run playbook
+        run: ansible-playbook site.yml --limit "${{ matrix.host }}"
+
+      # A deploy job whose last step is ansible-playbook has only proven
+      # that Ansible reported ok. Check the thing that actually has to be
+      # true afterwards, and fail loudly when it isn't.
+      - name: Smoke test
+        if: matrix.host == 'pve_host'
+        run: |
+          FAILED=0
+
+          NOTIFY=$(ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
+            ci-deploy@pve.ts.conway-hash.com \
+            'sudo pvesh get /cluster/options --output-format json' | jq -r '.notify // ""')
+          case "$NOTIFY" in
+            *package-updates=always*) echo "OK: package-updates=always" ;;
+            *) echo "::error::package-updates is not 'always' (got: '$NOTIFY') — nightly update checks report to nobody"; FAILED=1 ;;
+          esac
+
+          if ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
+            ci-deploy@pve.ts.conway-hash.com 'apt-config dump >/dev/null 2>&1'; then
+            echo "OK: apt config parses"
+          else
+            echo "::error::apt config is malformed — every apt invocation on the host is now broken"
+            FAILED=1
+          fi
+
+          exit $FAILED

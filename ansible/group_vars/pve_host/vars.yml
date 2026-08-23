@@ -1,0 +1,26 @@
+---
+# The Proxmox hypervisor itself. Bare metal, installed from the ISO —
+# nothing here creates the machine, this only converges a running one.
+
+# Proxmox's default is "auto", which stays silent on a host without a
+# subscription — i.e. exactly this one. "always" makes pve-daily-update
+# report pending packages every night.
+#
+# With no notification endpoint configured, these are delivered by
+# Proxmox's built-in mail-to-root target: local sendmail to root's mailbox
+# on the box (postfix is installed and running by default), readable with
+# `mail`. No credentials, no external service, nothing to leak.
+pve_notify_package_updates: always
+
+# Extra apt origins added to unattended-upgrades as a drop-in.
+#
+# Debian-Security and Proxmox are already allowed by Debian's own shipped
+# 50unattended-upgrades — this list is only what that file MISSES. APT
+# config lists append across files, which is why this role never edits
+# the vendor file.
+unattended_extra_origins:
+  # Tailscale ships from its own repo, so nothing in the default origins
+  # matches it and the VPN client would otherwise never update. On a
+  # single-node box you can physically reach, a broken tailscale update is
+  # an inconvenience; a permanently stale one is a security hole.
+  - "site=pkgs.tailscale.com"

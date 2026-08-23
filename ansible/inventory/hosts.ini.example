@@ -1,0 +1,27 @@
+# Copy to inventory/hosts.ini (git-ignored). In CI this is generated at
+# deploy time — see .github/workflows/deploy.yml.
+#
+# Two accounts exist on the Proxmox host on purpose:
+#
+#   claude    — no sudo at all, for read-only inspection. Not used here.
+#   ci-deploy — NOPASSWD sudo, the only account that applies changes.
+#
+# A restricted-sudo whitelist was considered and rejected: `sudo cat` reads
+# /etc/shadow and `sudo journalctl` can shell out through its pager, so a
+# whitelist looks limited without being limited. No-sudo is a real
+# boundary; a whitelist is a comfortable-feeling fake one.
+
+[pve_host]
+pve ansible_host=pve.ts.conway-hash.com ansible_user=ci-deploy
+
+[pve_host:vars]
+ansible_ssh_private_key_file=~/.ssh/homelab_ci_deploy
+ansible_ssh_common_args=-o StrictHostKeyChecking=accept-new -o ControlMaster=auto -o ControlPersist=15m -o ControlPath=/tmp/ansible-cp/%C
+
+# Guests go here as they are built. The Obsidian sync server (VM 100) is
+# NOT on the tailnet yet, so nothing outside the LAN can reach it — it
+# needs `tailscale up --login-server=https://vpn.conway-hash.com` before it
+# can be added.
+#
+# [obsidian]
+# obsidian ansible_host=obsidian.ts.conway-hash.com ansible_user=ci-deploy

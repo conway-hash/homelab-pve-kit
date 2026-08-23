@@ -1,0 +1,59 @@
+name: Ansible Lint
+
+on:
+  pull_request:
+    paths:
+      - "ansible/**"
+      - ".github/workflows/ansible-lint.yml"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - run: pip install ansible ansible-lint
+
+      - working-directory: ansible
+        run: |
+          ansible-galaxy collection install -r requirements.yml
+          ansible-lint site.yml
+
+  tailnet-fact-drift:
+    # The tailnet facts in group_vars/all/vars.yml originate in the
+    # homelab-vpn-kit repo. Rather than share them through a git-hosted
+    # collection or a composite action — tried once, scrapped, it was worse
+    # than the duplication — this repo declares them once and CI fails if
+    # they drift from upstream. No auth needed; that repo is public.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compare headscale_server_url against homelab-vpn-kit
+        run: |
+          read_url() {
+            grep '^headscale_server_url:' "$1" \
+              | sed 's/^headscale_server_url:[[:space:]]*//; s/[[:space:]]*#.*$//'
+          }
+
+          LOCAL=$(read_url ansible/group_vars/all/vars.yml)
+
+          curl -fsSL -o /tmp/upstream.yml \
+            https://raw.githubusercontent.com/conway-hash/homelab-vpn-kit/main/ansible/group_vars/coordination_server/vars.yml
+          UPSTREAM=$(read_url /tmp/upstream.yml)
+
+          if [ -z "$UPSTREAM" ]; then
+            echo "::error::Could not read headscale_server_url from homelab-vpn-kit — has that file moved?"
+            exit 1
+          fi
+
+          if [ "$LOCAL" != "$UPSTREAM" ]; then
+            echo "::error::headscale_server_url drifted: this repo has '$LOCAL', homelab-vpn-kit has '$UPSTREAM'"
+            exit 1
+          fi
+
+          echo "OK: both repos agree on $LOCAL"

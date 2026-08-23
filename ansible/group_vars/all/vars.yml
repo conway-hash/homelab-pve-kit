@@ -1,0 +1,21 @@
+---
+# Golden-base facts — true for every machine in this repo. Declared here
+# and nowhere else.
+#
+# USING THIS AS A TEMPLATE? These are the author's real, live values.
+# Change them or your guests will try to join someone else's tailnet.
+#
+# Keep "change this" markers on their own line, never trailing after a
+# value — CI reads some of these with `grep | sed` and would capture the
+# comment as part of the value.
+
+# <-- change this
+tailnet_base_domain: ts.conway-hash.com
+
+# <-- change this
+#
+# The Headscale coordination server that guests join. This value is also
+# declared in the homelab-vpn-kit repo, which is its origin — CI here
+# fetches that file and fails if the two have drifted. See
+# .github/workflows/ansible-lint.yml's "tailnet fact drift" step.
+headscale_server_url: https://vpn.conway-hash.com
