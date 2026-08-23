@@ -6,99 +6,105 @@
 <title>{{ pve_node }}</title>
 <style>
 :root{
-  --bg:#0a0e14; --card:#111720; --card2:#0d131b; --line:#1d2733;
+  --bg:#0a0e14; --card:#111720; --card2:#0d131b; --line:#1d2733; --line2:#141c26;
   --fg:#dbe4ee; --mut:#7a8899; --faint:#3d4a5a;
-  --blue:#4c9aff; --green:#4ec9a5; --amber:#e0a34a; --red:#e05c5c; --violet:#9b8cff;
-  --r:10px;
+  --blue:#4c9aff; --green:#4ec9a5; --amber:#e0a34a; --red:#e05c5c; --violet:#9b8cff; --pink:#e07ab0;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
-body{
-  background:
-    radial-gradient(1100px 620px at 78% -12%, #14202e 0%, transparent 62%),
-    var(--bg);
-  color:var(--fg); overflow:hidden; cursor:none;
-  font:14px/1.5 "DejaVu Sans",system-ui,sans-serif;
-}
+body{background:radial-gradient(1100px 620px at 76% -14%,#14202e 0%,transparent 62%),var(--bg);
+     color:var(--fg);overflow:hidden;cursor:none;font:13.5px/1.5 "DejaVu Sans",system-ui,sans-serif}
 .mono{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
 
-#app{height:100vh;display:grid;gap:14px;padding:14px;
-     grid-template-columns:minmax(340px,.85fr) 1.5fr;
-     grid-template-rows:auto auto 1fr;
-     grid-template-areas:"top top" "stats mesh" "vms mesh"}
-.card{background:linear-gradient(180deg,var(--card) 0%,var(--card2) 100%);
-      border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;
-      overflow:hidden;position:relative}
-.t{font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--mut);
-   margin-bottom:14px;display:flex;align-items:center;gap:8px}
+#app{height:100vh;display:grid;gap:12px;padding:12px;
+     grid-template-columns:330px 1fr 310px;
+     grid-template-rows:auto 1fr auto;
+     grid-template-areas:"top top top" "sys map alert" "sys vms alert"}
+.card{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);
+      border-radius:10px;padding:14px 16px;overflow:hidden;position:relative}
+.t{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut);
+   margin-bottom:12px;display:flex;align-items:center;gap:9px}
 .t::after{content:"";flex:1;height:1px;background:var(--line)}
+.t i{font-style:normal;color:var(--faint);letter-spacing:0;text-transform:none;font-size:11px}
 
-/* ── top bar ───────────────────────────────────────────────── */
-#top{grid-area:top;display:flex;align-items:center;gap:16px;padding:13px 18px}
-#name{font-size:22px;font-weight:600;letter-spacing:.02em}
-#name em{font-style:normal;color:var(--faint);font-weight:400}
-.pill{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--mut);
-      background:#0c1219;border:1px solid var(--line);border-radius:99px;padding:5px 12px}
+/* header */
+#top{grid-area:top;display:flex;align-items:center;gap:11px;padding:11px 16px}
+#name{font-size:20px;font-weight:600}
+#name em{font-style:normal;color:var(--faint);font-weight:400;font-size:13px;margin-left:5px}
+.pill{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--mut);
+      background:#0c1219;border:1px solid var(--line);border-radius:99px;padding:5px 11px;white-space:nowrap}
 .pill b{font-weight:600;color:var(--fg)}
 .led{width:7px;height:7px;border-radius:50%;background:var(--faint);flex:none}
-.led.ok{background:var(--green);animation:beat 2.4s ease-in-out infinite}
-.led.warn{background:var(--amber)} .led.bad{background:var(--red);animation:beat .9s ease-in-out infinite}
-@keyframes beat{0%,100%{box-shadow:0 0 0 0 currentColor;opacity:1}50%{box-shadow:0 0 0 4px transparent;opacity:.55}}
-#clock{margin-left:auto;font-size:24px;font-weight:600;letter-spacing:.03em}
-#date{font-size:11px;color:var(--mut);text-align:right}
+.led.ok{background:var(--green);animation:beat 2.6s ease-in-out infinite}
+.led.warn{background:var(--amber)}
+.led.bad{background:var(--red);animation:beat .9s ease-in-out infinite}
+@keyframes beat{0%,100%{opacity:1}50%{opacity:.45}}
+#clock{font-size:22px;font-weight:600}
+#date{font-size:10.5px;color:var(--mut);text-align:right}
 
-/* ── stat cards ────────────────────────────────────────────── */
-#stats{grid-area:stats;display:grid;gap:12px;grid-template-columns:1fr 1fr}
-#stats>.card{padding:13px 14px}
-.s-h{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:2px}
-.s-l{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut)}
-.s-v{font-size:27px;font-weight:600;letter-spacing:-.01em;line-height:1.15}
-.s-v small{font-size:14px;color:var(--mut);font-weight:400;margin-left:1px}
-.s-sub{font-size:11px;color:var(--mut);margin-bottom:7px}
-.spark{height:38px;width:100%;display:block;overflow:visible}
-.track{height:4px;background:#0a0f16;border-radius:3px;overflow:hidden;margin-top:8px}
-.track>i{display:block;height:100%;border-radius:3px;background:var(--blue);
-         width:0;transition:width .9s cubic-bezier(.22,.7,.24,1),background .5s}
-.wide{grid-column:1/-1}
+/* left: system */
+#sys{grid-area:sys;overflow-y:auto}
+.blk{margin-bottom:15px}
+.blk:last-child{margin-bottom:0}
+.bh{display:flex;align-items:baseline;gap:8px;margin-bottom:5px}
+.bh .l{font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--mut)}
+.bh .v{margin-left:auto;font-size:16px;font-weight:600}
+.bh .v small{font-size:11px;color:var(--mut);font-weight:400}
+.sub{font-size:10.5px;color:var(--faint);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.spark{height:30px;width:100%;display:block}
+.track{height:4px;background:#080d13;border-radius:3px;overflow:hidden}
+.track>i{display:block;height:100%;border-radius:3px;width:0;
+         transition:width .9s cubic-bezier(.22,.7,.24,1),background .5s}
+.fsr{display:grid;grid-template-columns:1fr auto;gap:2px 8px;margin-bottom:9px}
+.fsr .m{font-size:12px}.fsr .u{font-size:11px;color:var(--mut)}
+.fsr .track{grid-column:1/-1}
+.nr{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:5px}
+.nr .i{color:var(--mut);width:78px;flex:none;font-size:11px}
+.nr .d{color:var(--green)} .nr .u2{color:var(--violet)}
 
-/* ── machines ──────────────────────────────────────────────── */
-#vms{grid-area:vms;overflow-y:auto}
-.vm{padding:11px 0;border-bottom:1px solid var(--line)}
-.vm:last-child{border-bottom:0}
-.vm-h{display:flex;align-items:center;gap:9px;margin-bottom:8px}
-.vm-n{font-weight:600}
-.tag{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--mut);
-     border:1px solid var(--line);border-radius:4px;padding:1px 6px}
-.vm-u{margin-left:auto;font-size:11.5px;color:var(--mut)}
-.vm-m{display:grid;grid-template-columns:34px 1fr 58px;gap:9px;align-items:center;
-      font-size:11px;color:var(--mut);margin-top:5px}
-.vm-m .track{margin:0}
-
-/* ── mesh ──────────────────────────────────────────────────── */
-#mesh{grid-area:mesh;display:flex;flex-direction:column}
+/* middle */
+#map{grid-area:map;display:flex;flex-direction:column}
 #msvg{flex:1;width:100%;min-height:0}
 .edge{fill:none;stroke-linecap:round}
-.e-direct{stroke:var(--green);stroke-width:2;opacity:.8}
-.e-relay{stroke:var(--amber);stroke-width:2;stroke-dasharray:7 6;opacity:.85;
-         animation:flow 1.1s linear infinite}
+.e-direct{stroke:var(--green);stroke-width:2.2;opacity:.85}
+.e-relay{stroke:var(--amber);stroke-width:2.2;stroke-dasharray:7 6;animation:flow 1.1s linear infinite}
 @keyframes flow{to{stroke-dashoffset:-13}}
-.e-off{stroke:var(--faint);stroke-width:1.2;stroke-dasharray:2 6;opacity:.55}
-.e-unknown{stroke:var(--faint);stroke-width:1;stroke-dasharray:1 7;opacity:.34}
-.n-ring{fill:var(--card);stroke-width:2;transition:stroke .6s}
-.n-name{fill:var(--fg);font-size:12.5px;text-anchor:middle;font-weight:600}
-.n-ip{fill:var(--mut);font-size:10px;text-anchor:middle}
+.e-off{stroke:var(--faint);stroke-width:1.2;stroke-dasharray:2 6;opacity:.6}
+.n-name{fill:var(--fg);font-size:12px;text-anchor:middle;font-weight:600}
+.n-ip{fill:var(--mut);font-size:9.5px;text-anchor:middle}
 .n-st{font-size:9.5px;text-anchor:middle}
-.pulse{animation:halo 3s ease-out infinite}
-@keyframes halo{0%{r:20;opacity:.5}100%{r:34;opacity:0}}
-
-#key{border-top:1px solid var(--line);margin-top:6px;padding-top:11px;
-     display:grid;grid-template-columns:1fr 1fr;gap:7px 20px;font-size:11.5px;color:var(--mut)}
-#key .k{display:flex;gap:9px;align-items:flex-start}
-#key svg{flex:none;margin-top:6px}
+.pulse{animation:halo 3.2s ease-out infinite}
+@keyframes halo{0%{r:19;opacity:.45}100%{r:33;opacity:0}}
+#key{font-size:10.5px;color:var(--mut);border-top:1px solid var(--line);padding-top:8px;
+     display:flex;gap:16px;flex-wrap:wrap;align-items:center}
 #key b{color:var(--fg);font-weight:600}
-#relays{grid-column:1/-1;border-top:1px dashed var(--line);padding-top:8px;
-        font-size:11px;color:var(--mut);min-height:17px}
+#relays{width:100%;color:var(--faint)}
 #relays b{color:var(--amber)}
+
+#vms{grid-area:vms;overflow-y:auto;max-height:34vh}
+.vm{padding:9px 0;border-bottom:1px solid var(--line2)}
+.vm:last-child{border-bottom:0}
+.vh{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.vh .n{font-weight:600;font-size:13.5px}
+.tag{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);
+     border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+.vh .up{margin-left:auto;font-size:11px;color:var(--mut)}
+.vg{display:grid;grid-template-columns:30px 1fr 128px;gap:8px;align-items:center;
+    font-size:10.5px;color:var(--mut);margin-top:4px}
+.vg .n2{text-align:right;color:var(--fg);font-size:11px}
+
+/* right: attention */
+#alert{grid-area:alert;overflow-y:auto}
+.al{display:flex;gap:9px;padding:8px 0;border-bottom:1px solid var(--line2);font-size:12px}
+.al:last-child{border-bottom:0}
+.al .ic{flex:none;width:16px;text-align:center;font-size:12px}
+.al .tx{flex:1}
+.al .tx b{display:block;font-weight:600;font-size:12.5px;margin-bottom:1px}
+.al .tx span{color:var(--mut);font-size:11px}
+.ok-note{color:var(--green);font-size:12px;display:flex;gap:8px;align-items:center;padding:8px 0}
+.pkg{font-size:11px;color:var(--mut);margin-top:4px;line-height:1.7}
+.pkg code{background:#0c1219;border:1px solid var(--line);border-radius:4px;
+          padding:1px 5px;color:var(--fg);font-size:10.5px;margin-right:4px;display:inline-block}
 
 #stale{position:fixed;inset:0;background:rgba(10,14,20,.93);display:none;
        align-items:center;justify-content:center;color:var(--amber);font-size:19px}
@@ -108,35 +114,56 @@ body{
 <div id="app">
   <div id="top" class="card">
     <div id="name">…</div>
-    <div class="pill"><span class="led ok" id="ctl_led"></span>control plane <b id="ctl">—</b></div>
-    <div class="pill"><span class="led" id="ts_led"></span>tailnet <b id="ts">—</b></div>
-    <div class="pill"><span class="led" id="up_led"></span><b id="upd">—</b></div>
-    <div class="pill">uptime <b id="up">—</b></div>
+    <div class="pill"><span class="led" id="l_net"></span>internet <b id="v_net">—</b></div>
+    <div class="pill"><span class="led" id="l_ts"></span>tailnet <b id="v_ts">—</b></div>
+    <div class="pill"><span class="led" id="l_ctl"></span>headscale-coordination-server <b id="v_ctl">—</b></div>
+    <div class="pill">uptime <b id="v_up">—</b></div>
     <div style="margin-left:auto;text-align:right">
       <div id="clock" class="mono">--:--:--</div><div id="date"></div>
     </div>
   </div>
 
-  <div id="stats">
-    <div class="card">
-      <div class="s-h"><span class="s-l">cpu</span></div>
-      <div class="s-v mono"><span id="cpu_v">0.0</span><small>%</small></div>
-      <div class="s-sub" id="cpu_s">—</div>
+  <div id="sys" class="card">
+    <div class="t">system</div>
+
+    <div class="blk">
+      <div class="bh"><span class="l">cpu</span><span class="v mono"><span id="cpu_v">0.0</span><small>%</small></span></div>
       <svg class="spark" id="cpu_sp" preserveAspectRatio="none"></svg>
+      <div class="sub" id="cpu_sub">—</div>
     </div>
-    <div class="card">
-      <div class="s-h"><span class="s-l">memory</span></div>
-      <div class="s-v mono"><span id="mem_v">0.0</span><small>%</small></div>
-      <div class="s-sub" id="mem_s">—</div>
+
+    <div class="blk">
+      <div class="bh"><span class="l">memory</span><span class="v mono" id="mem_v">—</span></div>
       <svg class="spark" id="mem_sp" preserveAspectRatio="none"></svg>
+      <div class="sub" id="mem_sub">—</div>
     </div>
-    <div class="card wide">
-      <div class="s-h"><span class="s-l">root filesystem</span>
-        <span class="s-sub mono" style="margin:0" id="disk_s">—</span></div>
-      <div class="track"><i id="disk_b"></i></div>
-      <div class="s-h" style="margin-top:9px">
-        <span class="s-l">load average</span>
-        <span class="mono" id="load" style="font-size:13px">—</span></div>
+
+    <div class="blk" id="gpu_blk">
+      <div class="bh"><span class="l">gpu</span><span class="v mono"><span id="gpu_v">0</span><small>%</small></span></div>
+      <div class="track"><i id="gpu_b"></i></div>
+      <div class="sub" id="gpu_sub">—</div>
+    </div>
+
+    <div class="blk">
+      <div class="bh"><span class="l">network</span></div>
+      <div id="net_rows"></div>
+    </div>
+
+    <div class="blk">
+      <div class="bh"><span class="l">filesystems</span></div>
+      <div id="fs_rows"></div>
+    </div>
+  </div>
+
+  <div id="map" class="card">
+    <div class="t">tailnet <i>— links from this host</i></div>
+    <svg id="msvg" viewBox="0 0 640 380" preserveAspectRatio="xMidYMid meet"></svg>
+    <div id="key">
+      <span><svg width="22" height="3"><line x1="0" y1="1.5" x2="22" y2="1.5" stroke="var(--green)" stroke-width="2.2"/></svg>
+        <b>direct</b> — packets go straight between the two machines</span>
+      <span><svg width="22" height="3"><line x1="0" y1="1.5" x2="22" y2="1.5" stroke="var(--amber)" stroke-width="2.2" stroke-dasharray="6 5"/></svg>
+        <b>relayed</b> — a firewall blocked the direct path, so traffic detours via a relay. Encrypted either way, just slower</span>
+      <div id="relays"></div>
     </div>
   </div>
 
@@ -145,25 +172,9 @@ body{
     <div id="vmlist"></div>
   </div>
 
-  <div id="mesh" class="card">
-    <div class="t">tailnet mesh</div>
-    <svg id="msvg" viewBox="0 0 640 420" preserveAspectRatio="xMidYMid meet"></svg>
-    <div id="key">
-      <div class="k"><svg width="26" height="3"><line x1="0" y1="1.5" x2="26" y2="1.5"
-           stroke="var(--green)" stroke-width="2"/></svg>
-        <span><b>direct</b> — the two machines send packets straight to each other</span></div>
-      <div class="k"><svg width="26" height="3"><line x1="0" y1="1.5" x2="26" y2="1.5"
-           stroke="var(--amber)" stroke-width="2" stroke-dasharray="6 5"/></svg>
-        <span><b>relayed</b> — a firewall blocked the direct path, so traffic
-        detours via a relay. Encrypted end-to-end either way, just slower</span></div>
-      <div class="k"><svg width="26" height="3"><line x1="0" y1="1.5" x2="26" y2="1.5"
-           stroke="var(--faint)" stroke-width="1" stroke-dasharray="1 6"/></svg>
-        <span><b>not measured</b> — only this host's own links can be seen from here</span></div>
-      <div class="k"><svg width="26" height="3"><line x1="0" y1="1.5" x2="26" y2="1.5"
-           stroke="var(--faint)" stroke-width="1.2" stroke-dasharray="2 6"/></svg>
-        <span><b>offline</b> — that device isn't connected right now</span></div>
-      <div id="relays"></div>
-    </div>
+  <div id="alert" class="card">
+    <div class="t">needs attention</div>
+    <div id="alist"></div>
   </div>
 </div>
 <div id="stale">data is stale — collector not running?</div>
@@ -171,167 +182,201 @@ body{
 <script>
 const REFRESH={{ kiosk_refresh_seconds }}*1000, NS="http://www.w3.org/2000/svg";
 const $=i=>document.getElementById(i);
+const RELAY={ams:"Amsterdam",blr:"Bangalore",bom:"Mumbai",cdg:"Paris",den:"Denver",dfw:"Dallas",
+ dub:"Dublin",fra:"Frankfurt",hel:"Helsinki",hkg:"Hong Kong",ist:"Istanbul",jnb:"Johannesburg",
+ lax:"Los Angeles",lhr:"London",lis:"Lisbon",mad:"Madrid",mia:"Miami",mil:"Milan",muc:"Munich",
+ nrt:"Tokyo",nue:"Nuremberg",nyc:"New York",ord:"Chicago",par:"Paris",prg:"Prague",sao:"São Paulo",
+ sea:"Seattle",sfo:"San Francisco",sin:"Singapore",sto:"Stockholm",syd:"Sydney",tor:"Toronto",
+ vie:"Vienna",waw:"Warsaw",zrh:"Zurich"};
 
-// Relay names are airport codes, which tell you nothing unless you already
-// know them. Whichever ones are actually in use get spelled out below the
-// legend; anything unlisted still shows its raw code.
-const RELAY={ams:"Amsterdam",blr:"Bangalore",bom:"Mumbai",cdg:"Paris",den:"Denver",
- dfw:"Dallas",dub:"Dublin",fra:"Frankfurt",hel:"Helsinki",hkg:"Hong Kong",ist:"Istanbul",
- jnb:"Johannesburg",lax:"Los Angeles",lhr:"London",lis:"Lisbon",mad:"Madrid",mia:"Miami",
- mil:"Milan",muc:"Munich",nrt:"Tokyo",nue:"Nuremberg",nyc:"New York",ord:"Chicago",
- par:"Paris",prg:"Prague",sao:"São Paulo",sea:"Seattle",sfo:"San Francisco",sin:"Singapore",
- sto:"Stockholm",syd:"Sydney",tor:"Toronto",vie:"Vienna",waw:"Warsaw",zrh:"Zurich"};
-
-const gib=b=>(b/1073741824).toFixed(1)+" GiB";
+const G=b=>(b/1073741824).toFixed(1);
 const pc=(u,t)=>(!t||t<=0)?0:Math.min(100,u/t*100);
+function rate(b){b=b||0;
+  if(b>=1048576) return (b/1048576).toFixed(1)+" MB/s";
+  if(b>=1024)    return (b/1024).toFixed(0)+" kB/s";
+  return b+" B/s";}
 function dur(s){s=Math.floor(s||0);const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60|0;
   return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m`;}
 const mk=(t,a)=>{const n=document.createElementNS(NS,t);for(const k in a)n.setAttribute(k,a[k]);return n;};
 const tx=(x,y,c,s,f)=>{const n=mk("text",{x,y,class:c});if(f)n.setAttribute("fill",f);n.textContent=s;return n;};
-
-// Counting the number up instead of snapping to it: at a 10s poll a hard
-// jump reads as a glitch, and the eye catches a moving digit from across
-// a room where a static one just sits there.
-const tween={};
-function num(id,to,dp=1){
-  const el=$(id), from=tween[id]??to, t0=performance.now(), D=700;
-  tween[id]=to;
-  (function step(t){
-    const k=Math.min(1,(t-t0)/D), e=1-Math.pow(1-k,3);
-    el.textContent=(from+(to-from)*e).toFixed(dp);
-    if(k<1) requestAnimationFrame(step);
-  })(t0);
-}
 const tone=p=>p>=90?"var(--red)":p>=72?"var(--amber)":"var(--blue)";
 
-// Sparkline history lives only in the page — a rolling window of what the
-// screen has seen since it loaded. Nothing is persisted; this is a wall
-// display, not a metrics store.
-const hist={cpu:[],mem:[]}, KEEP=70;
+const tw={};
+function num(id,to,dp=1){
+  const el=$(id),from=tw[id]??to,t0=performance.now(),D=700; tw[id]=to;
+  (function s(t){const k=Math.min(1,(t-t0)/D),e=1-Math.pow(1-k,3);
+    el.textContent=(from+(to-from)*e).toFixed(dp); if(k<1)requestAnimationFrame(s);})(t0);
+}
+
+const hist={cpu:[],mem:[]},KEEP=70;
 function spark(id,arr,col){
-  const svg=$(id), W=300, H=38; svg.replaceChildren();
-  svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
-  if(arr.length<2) return;
-  const max=Math.max(10,...arr), st=W/(KEEP-1);
-  const pt=arr.map((v,i)=>[i*st,H-(v/max)*(H-4)-2]);
-  const d=pt.map((p,i)=>i?`L${p[0].toFixed(1)} ${p[1].toFixed(1)}`:`M${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join("");
-  const g=mk("g",{});
-  const gid=id+"_g", grad=mk("linearGradient",{id:gid,x1:0,y1:0,x2:0,y2:1});
-  grad.append(mk("stop",{offset:"0%","stop-color":col,"stop-opacity":".34"}),
-              mk("stop",{offset:"100%","stop-color":col,"stop-opacity":"0"}));
-  g.append(grad);
-  g.append(mk("path",{d:`${d}L${pt.at(-1)[0]} ${H}L0 ${H}Z`,fill:`url(#${gid})`,stroke:"none"}));
-  g.append(mk("path",{d,fill:"none",stroke:col,"stroke-width":1.8,"stroke-linejoin":"round"}));
-  g.append(mk("circle",{cx:pt.at(-1)[0],cy:pt.at(-1)[1],r:2.6,fill:col}));
-  // Slide the whole trace one step left, so the chart scrolls rather than
-  // twitching a new point into existence every poll.
-  g.style.transform=`translateX(${st}px)`;
-  svg.append(g);
+  const svg=$(id),W=290,H=30; svg.replaceChildren(); svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
+  if(arr.length<2)return;
+  const max=Math.max(10,...arr),st=W/(KEEP-1);
+  const pt=arr.map((v,i)=>[i*st,H-(v/max)*(H-3)-1.5]);
+  const d=pt.map((p,i)=>(i?"L":"M")+p[0].toFixed(1)+" "+p[1].toFixed(1)).join("");
+  const g=mk("g",{}),gid=id+"_g",gr=mk("linearGradient",{id:gid,x1:0,y1:0,x2:0,y2:1});
+  gr.append(mk("stop",{offset:"0%","stop-color":col,"stop-opacity":".32"}),
+            mk("stop",{offset:"100%","stop-color":col,"stop-opacity":"0"}));
+  g.append(gr,
+    mk("path",{d:`${d}L${pt.at(-1)[0]} ${H}L0 ${H}Z`,fill:`url(#${gid})`,stroke:"none"}),
+    mk("path",{d,fill:"none",stroke:col,"stroke-width":1.7,"stroke-linejoin":"round"}),
+    mk("circle",{cx:pt.at(-1)[0],cy:pt.at(-1)[1],r:2.4,fill:col}));
+  g.style.transform=`translateX(${st}px)`; svg.append(g);
   requestAnimationFrame(()=>{g.style.transition="transform .85s linear";g.style.transform="translateX(0)";});
 }
 
-function mesh(ts){
+// Only this host's own links. `tailscale status` here reports pve<->peer
+// and nothing about peer<->peer, so those are the only edges that exist.
+function map(ts){
   const svg=$("msvg"); svg.replaceChildren();
-  if(!ts||!ts.Self){svg.append(tx(320,210,"n-ip","tailnet data unavailable"));return;}
-  const nodes=[{p:ts.Self,me:true},...Object.values(ts.Peer||{}).map(p=>({p,me:false}))];
-  const n=nodes.length, cx=320, cy=196, R=Math.min(150,74+n*17);
+  if(!ts||!ts.Self){svg.append(tx(320,190,"n-ip","tailnet data unavailable"));return;}
+  const self=ts.Self,peers=Object.values(ts.Peer||{});
+  const cx=320,cy=182,R=Math.min(132,66+peers.length*20);
+  const relays=new Set();
 
-  // A ring, and every pair joined: this is a mesh, and no node — including
-  // the one drawing it — sits at its centre.
-  nodes.forEach((o,i)=>{const a=i/n*2*Math.PI-Math.PI/2;
-    o.x=cx+R*Math.cos(a); o.y=cy+R*Math.sin(a);});
+  peers.forEach((p,i)=>{
+    const a=i/peers.length*2*Math.PI-Math.PI/2;
+    p._x=cx+R*Math.cos(a); p._y=cy+R*Math.sin(a)*.82;
+  });
 
-  const seen=new Set(), relays=new Set();
-  for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){
-    const A=nodes[i],B=nodes[j], involvesMe=A.me||B.me;
-    const other=A.me?B:B.me?A:null;
-    let k="e-unknown";
-    if(involvesMe){
-      const p=other.p, on=p.Online;
-      const relayed=on&&!!p.Relay&&!p.CurAddr;
-      k=!on?"e-off":relayed?"e-relay":"e-direct";
-      if(relayed){relays.add(p.Relay); seen.add(p.Relay);}
+  peers.forEach(p=>{
+    const on=p.Online, rel=on&&!!p.Relay&&!p.CurAddr;
+    if(rel) relays.add(p.Relay);
+    svg.append(mk("line",{x1:cx,y1:cy,x2:p._x,y2:p._y,
+      class:"edge "+(!on?"e-off":rel?"e-relay":"e-direct")}));
+    if(rel){
+      const mx=(cx+p._x)/2,my=(cy+p._y)/2;
+      svg.append(mk("rect",{x:mx-17,y:my-9,width:34,height:18,rx:4,fill:"var(--card)",stroke:"var(--amber)"}));
+      svg.append(tx(mx,my+4,"n-ip",p.Relay,"var(--amber)"));
     }
-    // Bow each edge away from the centre so chords don't stack into a blob.
-    const mx=(A.x+B.x)/2, my=(A.y+B.y)/2;
-    const qx=mx+(mx-cx)*0.17, qy=my+(my-cy)*0.17;
-    svg.append(mk("path",{d:`M${A.x} ${A.y} Q${qx} ${qy} ${B.x} ${B.y}`,class:"edge "+k}));
-  }
+  });
 
-  nodes.forEach(o=>{
-    const p=o.p, on=p.Online||o.me;
-    const relayed=!o.me&&on&&!!p.Relay&&!p.CurAddr;
-    const col=o.me?"var(--blue)":!on?"var(--faint)":relayed?"var(--amber)":"var(--green)";
-    if(on) svg.append(mk("circle",{cx:o.x,cy:o.y,r:20,fill:col,opacity:".13",class:"pulse"}));
-    svg.append(mk("circle",{cx:o.x,cy:o.y,r:19,class:"n-ring",stroke:col}));
-    svg.append(tx(o.x,o.y+4,"n-name",(p.HostName||"?").slice(0,2).toUpperCase(),col));
-    svg.append(tx(o.x,o.y+37,"n-name",(p.HostName||"?").slice(0,15)));
-    svg.append(tx(o.x,o.y+50,"n-ip",(p.TailscaleIPs||[""])[0]));
-    svg.append(tx(o.x,o.y+62,"n-st",
-      o.me?"this host":!on?"offline":relayed?"via "+p.Relay:"direct",col));
+  [{p:self,me:true},...peers.map(p=>({p,me:false}))].forEach(o=>{
+    const p=o.p,on=p.Online||o.me,rel=!o.me&&on&&!!p.Relay&&!p.CurAddr;
+    const x=o.me?cx:p._x,y=o.me?cy:p._y;
+    const col=o.me?"var(--blue)":!on?"var(--faint)":rel?"var(--amber)":"var(--green)";
+    if(on)svg.append(mk("circle",{cx:x,cy:y,r:18,fill:col,opacity:".13",class:"pulse"}));
+    svg.append(mk("circle",{cx:x,cy:y,r:o.me?22:18,fill:"var(--card)",stroke:col,"stroke-width":2}));
+    svg.append(tx(x,y+4,"n-name",(p.HostName||"?").slice(0,2).toUpperCase(),col));
+    svg.append(tx(x,y+(o.me?40:36),"n-name",(p.HostName||"?").slice(0,15)));
+    svg.append(tx(x,y+(o.me?52:48),"n-ip",(p.TailscaleIPs||[""])[0]));
+    if(!o.me)svg.append(tx(x,y+60,"n-st",!on?"offline":rel?"via "+p.Relay:"direct",col));
   });
 
   $("relays").innerHTML = relays.size
-    ? "relays in use: "+[...relays].map(r=>`<b>${r}</b> = ${RELAY[r]||"unknown location"}`).join(" · ")
-    : "every link is direct right now — no relays in use";
+    ? "relay locations: "+[...relays].map(r=>`<b>${r}</b> = ${RELAY[r]||"unknown"}`).join(" · ")
+    : "";
 }
 
 function render(d){
-  $("name").innerHTML = (d.node||"?")+' <em>proxmox ve</em>';
-
+  $("name").innerHTML=(d.node||"?")+' <em>proxmox ve</em>';
   const h=d.host;
+
   if(h){
-    const cp=(h.cpu||0)*100, mp=pc(h.memory?.used,h.memory?.total), dp=pc(h.rootfs?.used,h.rootfs?.total);
-    hist.cpu.push(cp); hist.mem.push(mp);
-    if(hist.cpu.length>KEEP){hist.cpu.shift();hist.mem.shift();}
-    num("cpu_v",cp); num("mem_v",mp);
-    $("cpu_s").textContent=`${h.cpuinfo?.cpus||"?"} cores · ${(h.cpuinfo?.model||"").replace(/\(R\)|\(TM\)/g,"").slice(0,30)}`;
-    $("mem_s").textContent=`${gib(h.memory?.used)} of ${gib(h.memory?.total)}`;
-    $("disk_s").textContent=`${gib(h.rootfs?.used)} / ${gib(h.rootfs?.total)}`;
-    const b=$("disk_b"); b.style.width=dp+"%"; b.style.background=tone(dp);
-    $("load").textContent=(h.loadavg||[]).join("   ");
-    $("up").textContent=dur(h.uptime);
-    spark("cpu_sp",hist.cpu,"#4c9aff"); spark("mem_sp",hist.mem,"#9b8cff");
+    const cp=(h.cpu||0)*100, cores=h.cpuinfo?.cpus||1;
+    hist.cpu.push(cp); if(hist.cpu.length>KEEP)hist.cpu.shift();
+    num("cpu_v",cp);
+    // Load average only means something next to the core count: 1.00 on a
+    // 12-core box is idle, on a 1-core box it is saturated.
+    $("cpu_sub").textContent=`${cores} cores · load ${(h.loadavg||[]).join(" ")} of ${cores}`;
+    spark("cpu_sp",hist.cpu,"#4c9aff");
+
+    const mu=h.memory?.used,mt=h.memory?.total,mp=pc(mu,mt);
+    hist.mem.push(mp); if(hist.mem.length>KEEP)hist.mem.shift();
+    $("mem_v").innerHTML=`${G(mu)}<small> / ${G(mt)} GiB</small>`;
+    $("mem_sub").textContent=`${mp.toFixed(0)}% used · ${G(mt-mu)} GiB free`;
+    spark("mem_sp",hist.mem,"#9b8cff");
+    $("v_up").textContent=dur(h.uptime);
   }
 
-  const rows=[...(d.guests||[]).map(g=>({...g,k:"vm"})),...(d.lxc||[]).map(g=>({...g,k:"ct"}))]
+  const g=d.gpu;
+  $("gpu_blk").style.display=g?"":"none";
+  if(g){
+    num("gpu_v",g.busy||0,0);
+    const b=$("gpu_b"); b.style.width=(g.busy||0)+"%"; b.style.background=tone(g.busy||0);
+    $("gpu_sub").textContent=`${g.name} · ${G(g.used)} / ${G(g.total)} GiB vram · ${g.temp}°C`;
+  }
+
+  $("net_rows").innerHTML=(d.net||[]).map(n=>
+    `<div class="nr"><span class="i">${n.name}</span>
+      <span class="d mono">↓ ${rate(n.rx)}</span>
+      <span class="u2 mono">↑ ${rate(n.tx)}</span></div>`).join("")
+    || `<div class="sub">measuring…</div>`;
+
+  $("fs_rows").innerHTML=(d.fs||[]).map(f=>{
+    const p=pc(f.used,f.total);
+    return `<div class="fsr"><span class="m">${f.mount}</span>
+      <span class="u mono">${G(f.used)} / ${G(f.total)} GiB · ${p.toFixed(0)}%</span>
+      <div class="track"><i style="width:${p}%;background:${tone(p)}"></i></div></div>`;
+  }).join("");
+
+  const rows=[...(d.guests||[]).map(x=>({...x,k:"vm"})),...(d.lxc||[]).map(x=>({...x,k:"ct"}))]
              .sort((a,b)=>a.vmid-b.vmid);
-  $("vmlist").innerHTML = rows.length ? rows.map(g=>{
-    const on=g.status==="running";
-    const c=(g.cpu||0)*100, m=pc(g.mem,g.maxmem);
-    return `<div class="vm"><div class="vm-h">
-      <span class="led ${on?"ok":""}"></span><span class="vm-n">${g.name||"—"}</span>
-      <span class="tag">${g.k} ${g.vmid}</span>
-      <span class="vm-u">${on?dur(g.uptime):g.status}</span></div>`+
-      (on?`<div class="vm-m"><span>cpu</span><div class="track"><i style="width:${c.toFixed(1)}%;background:${tone(c)}"></i></div><span class="mono">${c.toFixed(1)}%</span></div>
-           <div class="vm-m"><span>mem</span><div class="track"><i style="width:${m.toFixed(1)}%;background:${tone(m)}"></i></div><span class="mono">${gib(g.mem).replace(" GiB","G")}</span></div>`:"")+
+  $("vmlist").innerHTML=rows.length?rows.map(v=>{
+    const on=v.status==="running";
+    const cu=(v.cpu||0)*(v.cpus||1), cp2=(v.cpu||0)*100, mp2=pc(v.mem,v.maxmem);
+    return `<div class="vm"><div class="vh">
+      <span class="led ${on?"ok":""}"></span><span class="n">${v.name||"—"}</span>
+      <span class="tag">${v.k} ${v.vmid}</span><span class="up">${on?dur(v.uptime):v.status}</span></div>`+
+      (on?`<div class="vg"><span>cpu</span>
+            <div class="track"><i style="width:${cp2}%;background:${tone(cp2)}"></i></div>
+            <span class="n2 mono">${cu.toFixed(2)} / ${v.cpus||1} cores</span></div>
+           <div class="vg"><span>ram</span>
+            <div class="track"><i style="width:${mp2}%;background:${tone(mp2)}"></i></div>
+            <span class="n2 mono">${G(v.mem)} / ${G(v.maxmem)} GiB</span></div>`:"")+
       `</div>`;
-  }).join("") : `<div class="vm-u">no machines</div>`;
+  }).join(""):`<div class="sub">no machines</div>`;
 
-  const u=d.updates|0;
-  $("upd").textContent = u ? u+" updates" : "up to date";
-  $("up_led").className = "led "+(u?"warn":"ok");
+  // ── needs attention ──────────────────────────────────────────
+  const A=[];
+  if(d.internet===false) A.push(["✕","No internet","this host can't reach the outside network",'var(--red)']);
+  if(d.control && !d.control.online) A.push(["!","Coordination server unreachable",
+    "new devices can't join and keys can't refresh — existing links keep working",'var(--amber)']);
+  if(d.tailnet && d.tailnet.BackendState!=="Running")
+    A.push(["!","Tailnet "+String(d.tailnet.BackendState).toLowerCase(),"this host is off the tailnet",'var(--red)']);
 
-  const c=d.control||{};
-  $("ctl").textContent = c.online ? "online" : "unreachable";
-  $("ctl_led").className = "led "+(c.online?"ok":"bad");
+  (d.fs||[]).forEach(f=>{const p=pc(f.used,f.total);
+    if(p>=85) A.push([p>=93?"✕":"!",`${f.mount} is ${p.toFixed(0)}% full`,
+      `${G(f.total-f.used)} GiB left`,p>=93?'var(--red)':'var(--amber)']);});
 
+  (d.failed||[]).forEach(u=>A.push(["✕","Failed unit",u,'var(--red)']));
+
+  Object.values(d.tailnet?.Peer||{}).forEach(p=>{
+    if(p.Online && p.Relay && !p.CurAddr)
+      A.push(["~",`${p.HostName} is relayed`,
+        `going via ${RELAY[p.Relay]||p.Relay} instead of connecting directly — slower`,'var(--amber)']);
+  });
+
+  const ups=d.updates||[];
+  let html=A.map(a=>`<div class="al"><span class="ic" style="color:${a[3]}">${a[0]}</span>
+      <span class="tx"><b>${a[1]}</b><span>${a[2]}</span></span></div>`).join("");
+
+  if(ups.length){
+    html+=`<div class="al"><span class="ic" style="color:var(--amber)">↑</span>
+      <span class="tx"><b>${ups.length} package update${ups.length>1?"s":""}</b>
+      <span>installed automatically on the next nightly run</span>
+      <div class="pkg">${ups.map(u=>`<code>${u.name}</code>`).join("")}</div></span></div>`;
+  }
+  $("alist").innerHTML = html || `<div class="ok-note"><span>✓</span> everything is healthy</div>`;
+
+  $("v_net").textContent=d.internet?"connected":"down";
+  $("l_net").className="led "+(d.internet?"ok":"bad");
   const st=d.tailnet?.BackendState||"unknown";
-  $("ts").textContent=st.toLowerCase();
-  $("ts_led").className="led "+(st==="Running"?"ok":"bad");
+  $("v_ts").textContent=st.toLowerCase(); $("l_ts").className="led "+(st==="Running"?"ok":"bad");
+  $("v_ctl").textContent=d.control?.online?"online":"unreachable";
+  $("l_ctl").className="led "+(d.control?.online?"ok":"bad");
 
-  mesh(d.tailnet);
+  map(d.tailnet);
   $("stale").style.display=((Date.now()-new Date(d.generated).getTime())/1000>REFRESH/1000*4)?"flex":"none";
 }
 
-async function tick(){
-  try{const r=await fetch("data.json?t="+Date.now(),{cache:"no-store"});if(r.ok)render(await r.json());}catch(e){}
-}
+async function tick(){try{const r=await fetch("data.json?t="+Date.now(),{cache:"no-store"});
+  if(r.ok)render(await r.json());}catch(e){}}
 function clock(){const n=new Date();
-  $("clock").textContent=n.toLocaleTimeString([], {hour12:false});
-  $("date").textContent=n.toLocaleDateString([], {weekday:"short",day:"numeric",month:"short"});}
-setInterval(clock,1000); clock();
-tick(); setInterval(tick,REFRESH);
+  $("clock").textContent=n.toLocaleTimeString([],{hour12:false});
+  $("date").textContent=n.toLocaleDateString([],{weekday:"short",day:"numeric",month:"short"});}
+setInterval(clock,1000); clock(); tick(); setInterval(tick,REFRESH);
 </script>
 </body>
 </html>
