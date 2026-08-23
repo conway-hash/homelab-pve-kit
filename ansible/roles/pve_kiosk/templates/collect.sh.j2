@@ -22,6 +22,15 @@ TAILNET=$(grab tailscale status --json)
 # Ties the panel to the update automation this repo already configures.
 UPDATES=$(apt list --upgradable 2>/dev/null | tail -n +2 | grep -c . || true)
 
+# The coordination server only matters as up/down here. It hands out keys
+# and tells nodes about each other; no traffic crosses it, so a blip does
+# not break existing links — which is exactly why it gets one status light
+# rather than a place in the graph.
+CTL_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "{{ headscale_server_url }}/health" 2>/dev/null || echo 000)
+if [ "$CTL_CODE" = "000" ]; then
+  CTL_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 "{{ headscale_server_url }}/" 2>/dev/null || echo 000)
+fi
+
 jq -n \
   --arg     generated "$(date -Is)"                     \
   --arg     node      "{{ pve_node }}"                  \
@@ -30,7 +39,11 @@ jq -n \
   --argjson lxc       "${LXC:-null}"                    \
   --argjson tailnet   "${TAILNET:-null}"                \
   --argjson updates   "${UPDATES:-0}"                   \
-  '{generated:$generated, node:$node, host:$host, guests:$guests, lxc:$lxc, tailnet:$tailnet, updates:$updates}' \
+  --arg     ctlurl    "{{ headscale_server_url }}"      \
+  --argjson ctlcode   "${CTL_CODE:-0}"                  \
+  '{generated:$generated, node:$node, host:$host, guests:$guests, lxc:$lxc,
+    tailnet:$tailnet, updates:$updates,
+    control:{url:$ctlurl, code:$ctlcode, online:($ctlcode >= 200 and $ctlcode < 500)}}' \
   > "$TMP"
 
 # Atomic swap: the page must never fetch a half-written file.
