@@ -1,7 +1,10 @@
 ---
 # Real Ansible Galaxy collections only. Shared logic in this repo lives as
 # ordinary local roles under ansible/roles/, referenced by bare name — no
-# git-collection sources, no private namespace.
-collections:
-  - name: ansible.posix
-    version: ">=1.5.0"
+# git-collection sources, no private namespace, no composite actions.
+#
+# Empty on purpose: the pve_host role uses nothing but ansible.builtin.
+# A dependency listed "because we'll probably need it" is the same clutter
+# as a role nothing references. community.docker lands here the day a role
+# actually imports it.
+collections: []

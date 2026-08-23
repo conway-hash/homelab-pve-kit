@@ -13,9 +13,12 @@
 
 # Guests live below this line. The pattern, when the first one lands:
 #
-# - name: Converge the Obsidian sync server
-#   hosts: obsidian
+# - name: Converge <service>
+#   hosts: <service>
 #   become: true
 #   roles:
 #     - common          # tailnet join, unattended-upgrades, docker
-#     - svc_obsidian    # the service itself, self-contained
+#     - svc_<service>   # the service itself, self-contained
+#
+# VM 100 (Obsidian sync) is not one of them and is not planned to be —
+# see inventory/hosts.ini.example.

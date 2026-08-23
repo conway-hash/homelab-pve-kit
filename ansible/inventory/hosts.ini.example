@@ -18,10 +18,13 @@ pve ansible_host=pve.ts.conway-hash.com ansible_user=ci-deploy
 ansible_ssh_private_key_file=~/.ssh/homelab_ci_deploy
 ansible_ssh_common_args=-o StrictHostKeyChecking=accept-new
 
-# Guests go here as they are built. The Obsidian sync server (VM 100) is
-# NOT on the tailnet yet, so nothing outside the LAN can reach it — it
-# needs `tailscale up --login-server=https://vpn.conway-hash.com` before it
-# can be added.
+# Guests go here as they are built. Each one needs to be on the tailnet
+# first — that is how Ansible reaches it at all, since these machines have
+# no public address.
 #
-# [obsidian]
-# obsidian ansible_host=obsidian.ts.conway-hash.com ansible_user=ci-deploy
+# VM 100 (Obsidian sync + DB) is deliberately NOT here. It predates this
+# repo, it stays LAN-only, and it is not managed by Ansible. Leave it
+# alone; it is not a gap waiting to be filled.
+#
+# [<service>]
+# <service> ansible_host=<service>.ts.conway-hash.com ansible_user=ci-deploy

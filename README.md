@@ -38,6 +38,11 @@ Real push delivery (ntfy or Gotify) needs a service to point at. When one
 exists, it's a webhook endpoint plus a matcher in `roles/pve_host/` — the
 rest of the design already accounts for it.
 
+## Scope
+
+The hypervisor, plus guests **created by this repo**. VM 100 (Obsidian
+sync + DB) predates it, stays on the LAN, and is not managed here.
+
 ## Layout
 
 ```
