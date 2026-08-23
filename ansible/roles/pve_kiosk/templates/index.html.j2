@@ -5,95 +5,115 @@
 <meta charset="utf-8">
 <title>{{ pve_node }}</title>
 <style>
+  /* Deliberately a terminal, not a dashboard. This screen replaced btop
+     on tty1 and sits in a room, so: monospace throughout, square corners,
+     no glow, no gradients, bars drawn with block characters. */
   :root{
-    --bg:#0e1116; --panel:#161b22; --line:#232c38;
-    --fg:#e6edf3; --dim:#8b98a5;
-    --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#58a6ff;
-    --relay:#d29922;
+    --line:#1e2321; --line2:#2c3330;
+    --fg:#c6cdc6; --dim:#6f7a74; --faint:#454e4a;
+    --green:#7fa66a; --amber:#c2954e; --red:#b5615c; --cyan:#5f97a1;
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
   body{
-    background:var(--bg); color:var(--fg); overflow:hidden;
-    font:14px/1.4 ui-monospace,"DejaVu Sans Mono",monospace;
-    /* A kiosk has no pointer. Hide it so a stray bump doesn't leave an
-       arrow parked in the middle of the screen forever. */
-    cursor:none;
+    background:var(--bg); color:var(--fg); overflow:hidden; cursor:none;
+    font:15px/1.45 "DejaVu Sans Mono",ui-monospace,monospace;
+    -webkit-font-smoothing:none;
   }
   #grid{
-    height:100vh; display:grid; gap:10px; padding:10px;
-    grid-template-columns:minmax(300px,1fr) 1.6fr;
+    height:100vh; display:grid; gap:1px; padding:1px; background:var(--line);
+    grid-template-columns:minmax(330px,1fr) 1.55fr;
     grid-template-rows:auto 1fr auto;
-    grid-template-areas:"head head" "stats graph" "guests graph";
+    grid-template-areas:"head head" "host net" "vms net";
   }
-  .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;overflow:hidden}
-  h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-bottom:10px;font-weight:600}
+  .p{background:var(--panel);padding:10px 14px;overflow:hidden}
+  .p>h2{
+    font-size:12px;color:var(--dim);font-weight:400;letter-spacing:.05em;
+    padding-bottom:6px;margin-bottom:9px;border-bottom:1px solid var(--line2);
+  }
+  .p>h2::before{content:"── "}
+  b{font-weight:400;color:var(--fg)}
+  .num{font-variant-numeric:tabular-nums}
 
-  #head{grid-area:head;display:flex;align-items:center;gap:18px}
-  #node{font-size:26px;font-weight:700;letter-spacing:.04em}
-  #clock{font-size:26px;font-weight:700;margin-left:auto;font-variant-numeric:tabular-nums}
-  .chip{padding:3px 10px;border-radius:99px;font-size:12px;border:1px solid var(--line);color:var(--dim)}
-  .chip.on{color:var(--ok);border-color:var(--ok)}
-  .chip.warn{color:var(--warn);border-color:var(--warn)}
-  .chip.bad{color:var(--bad);border-color:var(--bad)}
+  /* header ------------------------------------------------------- */
+  #head{grid-area:head;display:flex;align-items:baseline;gap:22px;padding:9px 14px}
+  #host{font-size:20px;color:var(--cyan)}
+  #host::before{content:"root@";color:var(--faint)}
+  .kv{font-size:13px;color:var(--dim)}
+  .kv b{color:var(--fg)}
+  .kv.warn b{color:var(--amber)} .kv.bad b{color:var(--red)} .kv.ok b{color:var(--green)}
+  #clock{margin-left:auto;font-size:20px;color:var(--dim)}
 
-  #stats{grid-area:stats}
-  .metric{margin-bottom:14px}
-  .metric .row{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px}
-  .metric .row span:last-child{color:var(--dim);font-variant-numeric:tabular-nums}
-  .bar{height:7px;background:#0b0e13;border-radius:4px;overflow:hidden}
-  .bar>i{display:block;height:100%;background:var(--accent);transition:width .6s ease}
-  .bar>i.warn{background:var(--warn)} .bar>i.bad{background:var(--bad)}
+  /* host metrics -------------------------------------------------- */
+  #host_p{grid-area:host}
+  .m{display:flex;align-items:baseline;gap:9px;margin-bottom:5px;font-size:14px}
+  .m .lbl{color:var(--dim);width:66px;flex:none}
+  .m .g{letter-spacing:-1px;white-space:pre;color:var(--green)}
+  .m .g.w{color:var(--amber)} .m .g.c{color:var(--red)}
+  .m .v{margin-left:auto;color:var(--dim)}
+  #cpuinfo{margin-top:10px;font-size:12px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-  #guests{grid-area:guests;overflow-y:auto}
-  .g{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)}
-  .g:last-child{border-bottom:0}
-  .dot{width:8px;height:8px;border-radius:50%;background:var(--bad);flex:none}
-  .dot.run{background:var(--ok);box-shadow:0 0 8px var(--ok)}
-  .g .nm{font-weight:600} .g .id{color:var(--dim);font-size:11px}
-  .g .rt{margin-left:auto;color:var(--dim);font-size:11px;text-align:right;font-variant-numeric:tabular-nums}
+  /* machines ------------------------------------------------------ */
+  #vms{grid-area:vms;overflow-y:auto}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  td{padding:3px 0}
+  td.s{width:14px}
+  td.k{color:var(--faint);font-size:12px;width:46px}
+  td.r{text-align:right;color:var(--dim);font-size:13px;white-space:nowrap}
+  .on{color:var(--green)} .off{color:var(--faint)}
 
-  #graph{grid-area:graph;display:flex;flex-direction:column}
-  svg{flex:1;width:100%}
-  .edge{stroke:var(--ok);stroke-width:1.6;opacity:.55}
-  .edge.relay{stroke:var(--relay);stroke-dasharray:5 4;opacity:.65}
-  .edge.off{stroke:var(--line);opacity:.35}
-  .nlabel{fill:var(--fg);font-size:11px;text-anchor:middle}
-  .nsub{fill:var(--dim);font-size:9px;text-anchor:middle}
-  #legend{display:flex;gap:16px;font-size:11px;color:var(--dim);padding-top:6px}
-  #legend i{display:inline-block;width:18px;height:0;border-top:2px solid;vertical-align:middle;margin-right:5px}
-  #stale{position:fixed;inset:0;background:rgba(14,17,22,.82);display:none;
-         align-items:center;justify-content:center;font-size:20px;color:var(--warn)}
+  /* network ------------------------------------------------------- */
+  #net{grid-area:net;display:flex;flex-direction:column}
+  svg{flex:1;width:100%;min-height:0}
+  text{font-family:"DejaVu Sans Mono",monospace}
+  .ctl{stroke:var(--faint);stroke-width:1;stroke-dasharray:2 4}
+  .lnk{stroke-width:1.5;fill:none}
+  .lnk.direct{stroke:var(--green)}
+  .lnk.relay{stroke:var(--amber);stroke-dasharray:6 4}
+  .lnk.dead{stroke:var(--faint);stroke-dasharray:1 4}
+  .nm{fill:var(--fg);font-size:12px;text-anchor:middle}
+  .sub{fill:var(--dim);font-size:10px;text-anchor:middle}
+  .note{fill:var(--faint);font-size:10px;text-anchor:middle}
+  #key{font-size:11px;color:var(--dim);border-top:1px solid var(--line2);padding-top:7px;margin-top:4px}
+  #key div{margin-bottom:2px}
+  #key s{text-decoration:none;color:var(--green)}
+  #key a{text-decoration:none;color:var(--amber)}
+  #key u{text-decoration:none;color:var(--faint)}
+
+  #stale{position:fixed;inset:0;background:rgba(11,13,12,.9);display:none;
+         align-items:center;justify-content:center;color:var(--amber);font-size:18px}
 </style>
 </head>
 <body>
 <div id="grid">
-  <div id="head" class="panel">
-    <div id="node">…</div>
-    <div class="chip" id="uptime">uptime —</div>
-    <div class="chip" id="updates">updates —</div>
-    <div class="chip" id="tsstate">tailnet —</div>
-    <div id="clock">--:--:--</div>
+  <div id="head" class="p">
+    <span id="host">…</span>
+    <span class="kv">up <b id="up">—</b></span>
+    <span class="kv" id="updk">pkg <b id="upd">—</b></span>
+    <span class="kv" id="tsk">tailnet <b id="ts">—</b></span>
+    <span id="clock">--:--:--</span>
   </div>
 
-  <div id="stats" class="panel">
-    <h2>Host</h2>
+  <div id="host_p" class="p">
+    <h2>host</h2>
     <div id="metrics"></div>
-    <div style="color:var(--dim);font-size:11px" id="cpumodel"></div>
+    <div id="cpuinfo"></div>
   </div>
 
-  <div id="guests" class="panel">
-    <h2>Guests</h2>
-    <div id="glist"></div>
+  <div id="vms" class="p">
+    <h2>virtual machines &amp; containers</h2>
+    <table id="vmt"></table>
   </div>
 
-  <div id="graph" class="panel">
-    <h2>Tailnet</h2>
-    <svg id="svg" viewBox="0 0 600 460" preserveAspectRatio="xMidYMid meet"></svg>
-    <div id="legend">
-      <span><i style="border-color:var(--ok)"></i>direct</span>
-      <span><i style="border-color:var(--relay);border-top-style:dashed"></i>relayed (DERP)</span>
-      <span><i style="border-color:var(--line)"></i>offline</span>
+  <div id="net" class="p">
+    <h2>tailnet</h2>
+    <svg id="svg" viewBox="0 0 620 430" preserveAspectRatio="xMidYMid meet"></svg>
+    <div id="key">
+      <div><s>───</s> direct — packets go straight between the two machines</div>
+      <div><a>╌╌╌</a> relayed — NAT blocked a direct path, so traffic detours
+           through a public relay (still end-to-end encrypted, just slower)</div>
+      <div><u>┈┈┈</u> control plane — headscale hands out keys and tells nodes
+           about each other. <b>No traffic flows through it.</b></div>
     </div>
   </div>
 </div>
@@ -101,125 +121,125 @@
 
 <script>
 const REFRESH = {{ kiosk_refresh_seconds }} * 1000;
-const SVGNS = "http://www.w3.org/2000/svg";
-const $ = id => document.getElementById(id);
+const CONTROL = "{{ headscale_server_url | regex_replace('^https?://', '') }}";
+const NS = "http://www.w3.org/2000/svg";
+const $ = i => document.getElementById(i);
 
-const pct  = (u,t) => (!t || t<=0) ? 0 : Math.min(100, (u/t)*100);
-const gib  = b => (b/1073741824).toFixed(1) + "G";
-const cls  = p => p>=90 ? "bad" : p>=70 ? "warn" : "";
+const gib = b => (b/1073741824).toFixed(1)+"G";
+const pct = (u,t) => (!t||t<=0) ? 0 : Math.min(100,(u/t)*100);
 function dur(s){
-  s = Math.floor(s||0);
-  const d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60);
-  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+  s=Math.floor(s||0);
+  const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
+  return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m`;
 }
-function bar(label, val, p){
-  return `<div class="metric"><div class="row"><span>${label}</span><span>${val}</span></div>
-          <div class="bar"><i class="${cls(p)}" style="width:${p.toFixed(1)}%"></i></div></div>`;
+// Block-character bars: this is meant to read as a terminal, and a text
+// bar in a monospace grid does that in a way a styled <div> cannot.
+function bar(p,w=26){
+  const f=Math.round(p/100*w);
+  return "█".repeat(f)+"░".repeat(Math.max(0,w-f));
 }
-
-function el(tag, attrs){
-  const n = document.createElementNS(SVGNS, tag);
-  for (const k in attrs) n.setAttribute(k, attrs[k]);
-  return n;
+function metric(lbl,p,val){
+  const k = p>=90?"c":p>=70?"w":"";
+  return `<div class="m"><span class="lbl">${lbl}</span>`+
+         `<span class="g ${k}">${bar(p)}</span>`+
+         `<span class="v num">${val}</span></div>`;
 }
+const mk=(t,a)=>{const n=document.createElementNS(NS,t);for(const k in a)n.setAttribute(k,a[k]);return n;};
+const txt=(x,y,c,s)=>Object.assign(mk("text",{x,y,class:c}),{textContent:s});
 
-function drawTailnet(ts){
-  const svg = $("svg");
-  svg.replaceChildren();
-  if (!ts || !ts.Self){
-    svg.append(Object.assign(el("text",{x:300,y:230,class:"nsub"}),{textContent:"tailscale data unavailable"}));
-    return;
-  }
-  const self  = ts.Self;
-  const peers = Object.values(ts.Peer || {});
-  const cx=300, cy=225, R=155;
+function drawNet(ts){
+  const svg=$("svg"); svg.replaceChildren();
+  if(!ts||!ts.Self){ svg.append(txt(310,215,"sub","tailscale data unavailable")); return; }
 
-  // Self at the centre, peers evenly around it. A hub layout, not a real
-  // mesh — every edge drawn is this node's own link to that peer, which is
-  // the only connection state this machine can actually observe.
-  peers.forEach((p,i) => {
-    const a = (i / peers.length) * 2*Math.PI - Math.PI/2;
-    const x = cx + R*Math.cos(a), y = cy + R*Math.sin(a);
-    const relayed = !!p.Relay && !p.CurAddr;
-    const k = !p.Online ? "off" : relayed ? "relay" : "";
-    svg.append(el("line",{x1:cx,y1:cy,x2:x,y2:y,class:"edge "+k}));
+  const self=ts.Self, peers=Object.values(ts.Peer||{});
+  const nodes=[{p:self,self:true},...peers.map(p=>({p,self:false}))];
 
-    if (p.Online && relayed){
-      const mx=(cx+x)/2, my=(cy+y)/2;
-      svg.append(el("circle",{cx:mx,cy:my,r:9,fill:"var(--panel)",stroke:"var(--relay)","stroke-width":1}));
-      svg.append(Object.assign(el("text",{x:mx,y:my+3,class:"nsub",fill:"var(--relay)"}),{textContent:p.Relay}));
-    }
-    svg.append(el("circle",{cx:x,cy:y,r:15,
-      fill: p.Online ? "var(--ok)" : "var(--line)",
-      "fill-opacity": p.Online ? .18 : .5,
-      stroke: p.Online ? "var(--ok)" : "var(--dim)", "stroke-width":1.6}));
-    const nm = (p.HostName||"?").slice(0,16);
-    svg.append(Object.assign(el("text",{x, y:y+31, class:"nlabel"}),{textContent:nm}));
-    svg.append(Object.assign(el("text",{x, y:y+43, class:"nsub"}),
-      {textContent: p.Online ? (relayed ? "relay "+p.Relay : "direct") : "offline"}));
+  // Nodes on one row; control plane above; observed links arced beneath.
+  // A ring centred on this host would imply it sits at the middle of the
+  // tailnet, which is exactly the wrong idea — it is one peer of several.
+  const y=190, x0=70, span=(620-x0*2)/Math.max(1,nodes.length-1);
+  nodes.forEach((n,i)=>n.x = nodes.length===1 ? 310 : x0+i*span);
+  const cx=310, cy=52;
+
+  svg.append(mk("rect",{x:cx-118,y:cy-19,width:236,height:38,fill:"none",stroke:"var(--faint)"}));
+  svg.append(txt(cx,cy-2,"sub",CONTROL));
+  svg.append(txt(cx,cy+12,"note","headscale · control plane"));
+  nodes.forEach(n=>svg.append(mk("line",{x1:cx,y1:cy+19,x2:n.x,y2:y-22,class:"ctl"})));
+
+  nodes.forEach(n=>{
+    const p=n.p, online=p.Online||n.self;
+    const relayed=!n.self && online && !!p.Relay && !p.CurAddr;
+    svg.append(mk("rect",{x:n.x-30,y:y-22,width:60,height:44,fill:"none",
+      stroke: n.self?"var(--cyan)":online?"var(--green)":"var(--faint)"}));
+    svg.append(txt(n.x,y-4,"nm",(p.HostName||"?").slice(0,11)));
+    svg.append(txt(n.x,y+11,"sub",(p.TailscaleIPs||[""])[0].replace("100.64.0.","·")));
+    svg.append(txt(n.x,y+38,"sub",
+      n.self ? "this host" : !online ? "offline" : relayed ? "relay "+p.Relay : "direct"));
   });
 
-  svg.append(el("circle",{cx,cy,r:26,fill:"var(--accent)","fill-opacity":.16,stroke:"var(--accent)","stroke-width":2}));
-  svg.append(Object.assign(el("text",{x:cx,y:cy+4,class:"nlabel",fill:"var(--accent)"}),
-    {textContent:(self.HostName||"self").slice(0,12)}));
+  // Only this node's own links are drawable: `tailscale status` here
+  // reports pve<->peer and nothing about peer<->peer. Saying so beats
+  // inventing edges that were never measured.
+  const me=nodes.find(n=>n.self);
+  nodes.filter(n=>!n.self).forEach(n=>{
+    const p=n.p, online=p.Online;
+    const relayed=online && !!p.Relay && !p.CurAddr;
+    const dip=y+62+Math.abs(n.x-me.x)/14;
+    svg.append(mk("path",{
+      d:`M ${me.x} ${y+22} Q ${(me.x+n.x)/2} ${dip} ${n.x} ${y+22}`,
+      class:"lnk "+(!online?"dead":relayed?"relay":"direct")}));
+    if(relayed){
+      const mx=(me.x+n.x)/2, my=y+22+(dip-(y+22))*0.5;
+      svg.append(mk("rect",{x:mx-19,y:my-8,width:38,height:16,fill:"var(--panel)",stroke:"var(--amber)"}));
+      svg.append(txt(mx,my+4,"sub",p.Relay));
+    }
+  });
+
+  svg.append(txt(310,414,"note",
+    "observed from this host only — links between the other peers are not visible here"));
 }
 
 function render(d){
-  $("node").textContent = d.node || "?";
-
-  const h = d.host;
-  if (h){
-    const mp = pct(h.memory?.used, h.memory?.total);
-    const rp = pct(h.rootfs?.used, h.rootfs?.total);
-    const cp = (h.cpu||0)*100;
-    $("metrics").innerHTML =
-      bar("cpu", cp.toFixed(1)+"%", cp) +
-      bar("memory", `${gib(h.memory?.used)} / ${gib(h.memory?.total)}`, mp) +
-      bar("rootfs", `${gib(h.rootfs?.used)} / ${gib(h.rootfs?.total)}`, rp) +
-      `<div class="metric"><div class="row"><span>load</span><span>${(h.loadavg||[]).join("  ")}</span></div></div>`;
-    $("cpumodel").textContent = `${h.cpuinfo?.cpus||"?"} cores · ${(h.cpuinfo?.model||"").slice(0,42)}`;
-    $("uptime").textContent = "uptime " + dur(h.uptime);
+  $("host").textContent=d.node||"?";
+  const h=d.host;
+  if(h){
+    const cp=(h.cpu||0)*100, mp=pct(h.memory?.used,h.memory?.total), rp=pct(h.rootfs?.used,h.rootfs?.total);
+    $("metrics").innerHTML=
+      metric("cpu",cp,cp.toFixed(1)+"%")+
+      metric("mem",mp,`${gib(h.memory?.used)}/${gib(h.memory?.total)}`)+
+      metric("disk",rp,`${gib(h.rootfs?.used)}/${gib(h.rootfs?.total)}`)+
+      `<div class="m"><span class="lbl">load</span><span class="v num">${(h.loadavg||[]).join("  ")}</span></div>`;
+    $("cpuinfo").textContent=`${h.cpuinfo?.cpus||"?"} cores · ${h.cpuinfo?.model||""}`;
+    $("up").textContent=dur(h.uptime);
   }
 
-  const all = [ ...(d.guests||[]).map(g=>({...g,kind:"vm"})),
-                ...(d.lxc||[]).map(g=>({...g,kind:"ct"})) ]
-              .sort((a,b)=>a.vmid-b.vmid);
-  $("glist").innerHTML = all.length ? all.map(g => {
-    const run = g.status === "running";
-    return `<div class="g"><span class="dot ${run?"run":""}"></span>
-      <span class="nm">${g.name||"—"}</span><span class="id">${g.kind} ${g.vmid}</span>
-      <span class="rt">${run ? dur(g.uptime)+" · "+gib(g.mem)+"/"+gib(g.maxmem) : g.status}</span></div>`;
-  }).join("") : `<div style="color:var(--dim)">no guests</div>`;
+  const rows=[...(d.guests||[]).map(g=>({...g,k:"vm"})),...(d.lxc||[]).map(g=>({...g,k:"ct"}))]
+             .sort((a,b)=>a.vmid-b.vmid);
+  $("vmt").innerHTML = rows.length ? rows.map(g=>{
+    const on=g.status==="running";
+    return `<tr><td class="s ${on?"on":"off"}">${on?"●":"○"}</td>`+
+      `<td>${g.name||"—"}</td><td class="k">${g.k} ${g.vmid}</td>`+
+      `<td class="r num">${on?dur(g.uptime)+"  "+gib(g.mem)+"/"+gib(g.maxmem):g.status}</td></tr>`;
+  }).join("") : `<tr><td class="k">none</td></tr>`;
 
-  const u = d.updates|0;
-  const uc = $("updates");
-  uc.textContent = u ? `${u} update${u>1?"s":""}` : "up to date";
-  uc.className = "chip " + (u>0 ? "warn" : "on");
+  const u=d.updates|0;
+  $("upd").textContent = u ? u+" pending" : "current";
+  $("updk").className = "kv "+(u?"warn":"ok");
 
-  const st = $("tsstate");
-  const state = d.tailnet?.BackendState || "unknown";
-  st.textContent = "tailnet " + state.toLowerCase();
-  st.className = "chip " + (state === "Running" ? "on" : "bad");
+  const st=d.tailnet?.BackendState||"unknown";
+  $("ts").textContent=st.toLowerCase();
+  $("tsk").className="kv "+(st==="Running"?"ok":"bad");
 
-  drawTailnet(d.tailnet);
-
-  // The collector writing data.json is a separate unit from the one
-  // serving it. If the timer dies the page would otherwise sit there
-  // showing convincing, frozen numbers — say so instead.
-  const age = (Date.now() - new Date(d.generated).getTime())/1000;
-  $("stale").style.display = age > REFRESH/1000 * 4 ? "flex" : "none";
+  drawNet(d.tailnet);
+  $("stale").style.display=((Date.now()-new Date(d.generated).getTime())/1000 > REFRESH/1000*4)?"flex":"none";
 }
 
 async function tick(){
-  try{
-    const r = await fetch("data.json?t=" + Date.now(), {cache:"no-store"});
-    if (r.ok) render(await r.json());
-  }catch(e){ /* next tick retries; a blank panel is worse than a stale one */ }
+  try{ const r=await fetch("data.json?t="+Date.now(),{cache:"no-store"}); if(r.ok) render(await r.json()); }
+  catch(e){}
 }
-
-setInterval(() => $("clock").textContent = new Date().toLocaleTimeString(), 1000);
-tick();
-setInterval(tick, REFRESH);
+setInterval(()=>$("clock").textContent=new Date().toLocaleTimeString(),1000);
+tick(); setInterval(tick,REFRESH);
 </script>
 </body>
 </html>
