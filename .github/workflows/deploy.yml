@@ -83,7 +83,6 @@ jobs:
       - name: Write the inventory
         run: |
           cp inventory/hosts.ini.example inventory/hosts.ini
-          mkdir -p /tmp/ansible-cp
 
       - name: Run playbook
         run: ansible-playbook site.yml --limit "${{ matrix.host }}"
@@ -96,13 +95,18 @@ jobs:
         run: |
           FAILED=0
 
+          # pvesh returns `notify` as an object, not the "key=value" string
+          # the CLI accepts as input — read the field, don't grep the blob.
           NOTIFY=$(ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
             ci-deploy@pve.ts.conway-hash.com \
-            'sudo pvesh get /cluster/options --output-format json' | jq -r '.notify // ""')
-          case "$NOTIFY" in
-            *package-updates=always*) echo "OK: package-updates=always" ;;
-            *) echo "::error::package-updates is not 'always' (got: '$NOTIFY') — nightly update checks report to nobody"; FAILED=1 ;;
-          esac
+            'sudo pvesh get /cluster/options --output-format json' \
+            | jq -r '.notify["package-updates"] // ""')
+          if [ "$NOTIFY" = "always" ]; then
+            echo "OK: package-updates=always"
+          else
+            echo "::error::package-updates is '$NOTIFY', expected 'always' — nightly update checks report to nobody"
+            FAILED=1
+          fi
 
           if ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
             ci-deploy@pve.ts.conway-hash.com 'apt-config dump >/dev/null 2>&1'; then

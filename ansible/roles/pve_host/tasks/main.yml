@@ -65,12 +65,23 @@
   ansible.builtin.command: pvesh get /cluster/options --output-format json
   register: pve_cluster_options
   changed_when: false
+  # command tasks are skipped under --check by default, which would leave
+  # the task below with no stdout to parse. This one only reads, so it is
+  # safe — and necessary — to run during a dry run too.
+  check_mode: false
 
 - name: Set the package-updates notification policy
   ansible.builtin.command: >-
     pvesh set /cluster/options
     --notify package-updates={{ pve_notify_package_updates }}
   vars:
-    _notify: "{{ (pve_cluster_options.stdout | from_json).notify | default('') }}"
-  when: "'package-updates=' ~ pve_notify_package_updates not in _notify"
+    # pvesh returns `notify` as an OBJECT — {"package-updates": "always"} —
+    # not the "key=value" string the CLI takes as input. Substring-testing
+    # it against "package-updates=always" never matches, so the task reruns
+    # on every single play. Compare the parsed field instead.
+    #
+    # The key is absent entirely on a host that has never had this set,
+    # hence .get with a default rather than a subscript.
+    _notify: "{{ (pve_cluster_options.stdout | from_json).notify | default({}) }}"
+  when: _notify.get('package-updates', '') != pve_notify_package_updates
   changed_when: true
