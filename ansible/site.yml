@@ -8,7 +8,16 @@
   become: true
   gather_facts: true
 
+  # Order matters on a box that hasn't been touched before:
+  #
+  #   pve_repos  the enterprise repo is on by default and 401s without a
+  #              subscription, so apt is broken until this runs
+  #   tailscale  needs working apt to install; everything after this is
+  #              reachable by tailnet name
+  #   pve_host   sudo, unattended upgrades, notifications
   roles:
+    - pve_repos
+    - tailscale
     - pve_host
 
 # Guests live below this line. The pattern, when the first one lands:
@@ -17,7 +26,7 @@
 #   hosts: <service>
 #   become: true
 #   roles:
-#     - common          # tailnet join, unattended-upgrades, docker
+#     - tailscale       # same role, no Proxmox assumptions in it
 #     - svc_<service>   # the service itself, self-contained
 #
 # VM 100 (Obsidian sync) is not one of them and is not planned to be —

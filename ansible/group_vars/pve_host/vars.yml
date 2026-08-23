@@ -24,3 +24,30 @@ unattended_extra_origins:
   # single-node box you can physically reach, a broken tailscale update is
   # an inconvenience; a permanently stale one is a security hole.
   - "site=pkgs.tailscale.com"
+
+# Tailnet name for this box: pve.ts.conway-hash.com
+#
+# <-- change this
+tailscale_hostname: pve
+
+# Apt repositories, applied by the pve_repos role before anything else
+# touches apt. An out-of-the-box Proxmox enables the enterprise repos and
+# has no subscription, so every apt operation 401s until this runs.
+#
+# `suites` is not listed per-entry — it is always the host's own Debian
+# codename, read from facts, so it can't drift from the running release.
+pve_repositories:
+  - name: pve-enterprise
+    uris: https://enterprise.proxmox.com/debian/pve
+    components: [pve-enterprise]
+    enabled: false
+
+  - name: ceph
+    uris: https://enterprise.proxmox.com/debian/ceph-squid
+    components: [enterprise]
+    enabled: false
+
+  - name: proxmox
+    uris: http://download.proxmox.com/debian/pve
+    components: [pve-no-subscription]
+    enabled: true

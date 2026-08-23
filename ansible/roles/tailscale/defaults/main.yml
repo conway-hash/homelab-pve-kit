@@ -1,0 +1,19 @@
+---
+# No safe default — this is a secret. Set for real in
+# group_vars/<group>/secrets.yml (git-ignored) or written by CI from
+# GitHub Secrets. See SETUP.md.
+#
+# Only REQUIRED when the host isn't on the tailnet yet: an already-joined
+# machine converges without it, so routine runs need no secret at all.
+# The assert below is deliberately conditional for that reason.
+#
+# A permanent machine's key must be NON-ephemeral — an ephemeral one makes
+# the node delete itself the moment it disconnects. That is the opposite
+# of what CI's own throwaway runner key needs. Two keys, two scopes; don't
+# reuse one for the other.
+tailscale_authkey: ""
+
+# What this machine is called on the tailnet, i.e. the <name> in
+# <name>.ts.conway-hash.com. Kept short and clean regardless of how
+# verbose this repo's own name is — the two are unrelated.
+tailscale_hostname: "{{ inventory_hostname }}"

@@ -17,15 +17,18 @@ against upstream in CI.
 
 ## What it does
 
-| | |
-|---|---|
-| `sudo` | Installed. Proxmox's ISO doesn't ship it, so `/etc/sudoers.d/ci-deploy` is inert without it. |
-| Unattended upgrades | Enabled, security + Proxmox origins, **no automatic reboot**. |
-| Tailscale updates | Added to the allowed origins — its own repo matches nothing by default, so the VPN client would otherwise never update. |
-| Update notifications | `package-updates=always`, delivered by Proxmox's built-in mail-to-root target to the local root mailbox. |
+Three roles, applied in this order — which matters on a box that has
+never been touched:
 
-Not managed, because the box already had them right: the enterprise and
-Ceph repos are disabled and `pve-no-subscription` is enabled.
+| Role | What |
+|---|---|
+| `pve_repos` | Disables the enterprise + Ceph repos, enables `pve-no-subscription`. **First**, because out of the box the enterprise repo is on with no subscription and every `apt` call 401s until this runs. |
+| `tailscale` | Installs and joins the tailnet. Not Proxmox-specific — guests reuse it as-is. |
+| `pve_host` | `sudo` (Proxmox doesn't ship it), unattended upgrades with **no automatic reboot**, Tailscale added to the allowed origins, and `package-updates=always`. |
+
+Written to converge a **stock Proxmox install**, not just one that's
+already been set up by hand. Everything is idempotent — a second run is
+`changed=0`.
 
 ## Reading update notifications
 

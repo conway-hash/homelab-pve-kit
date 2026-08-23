@@ -1,0 +1,76 @@
+---
+# Reusable: the hypervisor uses this, and so will every guest that needs
+# to be reachable. Nothing in here is Proxmox-specific.
+
+- name: Install the Tailscale apt keyring
+  ansible.builtin.get_url:
+    url: "https://pkgs.tailscale.com/stable/debian/{{ ansible_facts['distribution_release'] }}.noarmor.gpg"
+    dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add the Tailscale apt repository
+  # A .list file, not deb822, on purpose: this is byte-for-byte what
+  # Tailscale's own install.sh writes. Adding the same repo again in
+  # another format would give apt two sources for one package.
+  ansible.builtin.get_url:
+    url: "https://pkgs.tailscale.com/stable/debian/{{ ansible_facts['distribution_release'] }}.tailscale-keyring.list"
+    dest: /etc/apt/sources.list.d/tailscale.list
+    owner: root
+    group: root
+    mode: "0644"
+  register: tailscale_repo
+
+- name: Refresh apt cache after adding the repository
+  ansible.builtin.apt:
+    update_cache: true
+  when: tailscale_repo.changed
+
+- name: Install tailscale
+  ansible.builtin.apt:
+    name: tailscale
+    state: present
+
+- name: Enable and start tailscaled
+  ansible.builtin.systemd_service:
+    name: tailscaled
+    enabled: true
+    state: started
+
+- name: Check whether this host is already on the tailnet
+  ansible.builtin.command: tailscale status --json
+  register: tailscale_state
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Refuse to join the tailnet without an auth key
+  # Only asserted when a join is actually needed. An already-joined host
+  # converges with no secret at all, which keeps routine runs — and CI for
+  # them — credential-free.
+  ansible.builtin.assert:
+    that: tailscale_authkey | length > 0
+    fail_msg: >-
+      {{ inventory_hostname }} is not on the tailnet and tailscale_authkey
+      is unset, so it cannot join. Mint a NON-ephemeral, non-reusable
+      Headscale pre-auth key and put it in
+      group_vars/{{ group_names | first }}/secrets.yml — see SETUP.md.
+  when: _tailscale_backend_state != 'Running'
+  vars:
+    _tailscale_backend_state: "{{ (tailscale_state.stdout | default('{}') | from_json).BackendState | default('Stopped') }}"
+
+- name: Join the tailnet
+  ansible.builtin.command:
+    argv:
+      - tailscale
+      - up
+      - --login-server={{ headscale_server_url }}
+      - --authkey={{ tailscale_authkey }}
+      - --hostname={{ tailscale_hostname }}
+      - --accept-dns=true
+  when: _tailscale_backend_state != 'Running'
+  vars:
+    _tailscale_backend_state: "{{ (tailscale_state.stdout | default('{}') | from_json).BackendState | default('Stopped') }}"
+  no_log: true
+  changed_when: true

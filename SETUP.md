@@ -44,17 +44,30 @@ ssh-keygen -t ed25519 -f ~/.ssh/homelab_ci_deploy -N '' -C "homelab-pve ci-deplo
 Passphrase-less on purpose — Ansible and CI both need them
 non-interactively.
 
-## 2. Put the host on the tailnet
+## 2. Mint a tailnet key (first run only)
 
-The host must be reachable as `pve.ts.conway-hash.com`. If `tailscale
-status` doesn't list it:
+The playbook installs Tailscale and joins the tailnet for you — but it
+needs a key to join *with*. On the coordination server:
 
 ```bash
-tailscale up --login-server=https://vpn.conway-hash.com --authkey=<key>
+sudo docker exec headscale headscale users list      # find your numeric ID
+sudo docker exec headscale headscale preauthkeys create --user 1
 ```
 
-Guests need this too before they can be added to the inventory. **The
-Obsidian sync server (VM 100) is not on the tailnet yet.**
+⚠️ **Non-ephemeral and single-use.** This is a permanent machine. An
+ephemeral key makes the node delete itself the moment it disconnects —
+that is what CI's throwaway runner wants (step 5) and the opposite of what
+a hypervisor needs. Two keys, two scopes; never reuse one for the other.
+
+```bash
+cd ansible
+cp group_vars/pve_host/secrets.yml.example group_vars/pve_host/secrets.yml
+$EDITOR group_vars/pve_host/secrets.yml     # paste the key
+```
+
+A host that's **already** on the tailnet needs none of this — the role
+asserts on the key only when a join is actually required, so routine runs
+are credential-free. Skip straight to step 3.
 
 ## 3. Local run
 
@@ -64,6 +77,17 @@ cp inventory/hosts.ini.example inventory/hosts.ini
 ansible-playbook site.yml --limit pve_host --check --diff   # dry run FIRST
 ansible-playbook site.yml --limit pve_host
 ```
+
+⚠️ **Chicken-and-egg on a stock box:** the inventory addresses the host as
+`pve.ts.conway-hash.com`, which does not resolve until Tailscale is
+installed and joined — which is what this playbook does. On the very first
+run, point it at the LAN address instead:
+
+```bash
+ansible-playbook site.yml --limit pve_host -e ansible_host=192.168.1.x
+```
+
+Every run after that works over the tailnet name.
 
 ⚠️ Always `--check --diff` first against a live hypervisor. It shows
 exactly what would change before anything is touched.

@@ -1,0 +1,41 @@
+---
+# Runs FIRST, before anything that touches apt.
+#
+# An out-of-the-box Proxmox has the enterprise repo enabled and no
+# subscription, so every `apt update` returns 401 and any package task
+# fails with a confusing error somewhere else entirely. Fixing the
+# repositories is the prerequisite for the whole rest of this playbook,
+# which is why it is its own role rather than a block inside pve_host.
+
+- name: Refuse to run on a Proxmox release this role does not understand
+  # PVE 9 moved apt configuration to deb822 .sources files; PVE 8 and
+  # earlier use one-line .list files, which deb822_repository will not
+  # touch. Failing here with a clear reason beats silently managing a
+  # .sources file that the running system ignores.
+  ansible.builtin.assert:
+    that: ansible_facts['distribution_major_version'] | int >= 13
+    fail_msg: >-
+      This role manages deb822 .sources files, which Proxmox VE 9
+      (Debian 13 trixie) and later use. This host is Debian
+      {{ ansible_facts['distribution_major_version'] }}, which uses one-line .list
+      files instead — configure its repositories by hand, or upgrade.
+
+- name: Configure the Proxmox apt repositories
+  ansible.builtin.deb822_repository:
+    name: "{{ item.name }}"
+    types: [deb]
+    uris: "{{ item.uris }}"
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: "{{ item.components }}"
+    signed_by: /usr/share/keyrings/proxmox-archive-keyring.gpg
+    enabled: "{{ item.enabled }}"
+  loop: "{{ pve_repositories }}"
+  loop_control:
+    label: "{{ item.name }} (enabled={{ item.enabled }})"
+  notify: Refresh apt cache
+
+- name: Refresh apt cache now if the repositories changed
+  # The handler runs at the end of the play, which is far too late — every
+  # package task below this role would still be working from the stale
+  # (or 401-poisoned) cache. Flush immediately instead.
+  ansible.builtin.meta: flush_handlers
