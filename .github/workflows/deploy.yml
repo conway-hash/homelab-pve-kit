@@ -16,6 +16,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Gate. Reuses ansible-lint.yml rather than copying its steps, so there
+  # is one definition of what "lint" means for this repo.
+  lint:
+    uses: ./.github/workflows/ansible-lint.yml
+
   # The matrix is derived from site.yml's own `hosts:` lines rather than
   # hardcoded here. Adding a service means adding a play in site.yml and a
   # roles/svc_<name>/ role — this workflow file is never touched again.
@@ -39,7 +44,7 @@ jobs:
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
   deploy:
-    needs: groups
+    needs: [lint, groups]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

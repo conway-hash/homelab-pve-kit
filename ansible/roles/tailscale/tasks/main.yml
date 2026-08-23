@@ -20,12 +20,13 @@
     owner: root
     group: root
     mode: "0644"
-  register: tailscale_repo
+  notify: Refresh apt cache after Tailscale repo change
 
-- name: Refresh apt cache after adding the repository
-  ansible.builtin.apt:
-    update_cache: true
-  when: tailscale_repo.changed
+- name: Refresh apt cache now if the repository changed
+  # The handler would otherwise run at the end of the play, long after the
+  # install task below has already failed against a cache that has never
+  # heard of tailscale.
+  ansible.builtin.meta: flush_handlers
 
 - name: Install tailscale
   ansible.builtin.apt:

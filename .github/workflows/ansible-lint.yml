@@ -5,6 +5,10 @@ on:
     paths:
       - "ansible/**"
       - ".github/workflows/ansible-lint.yml"
+  # Called as a gate by deploy.yml. Without this, pushing straight to main
+  # — which is how this repo is actually worked on — means lint never runs
+  # at all and unlinted code deploys. It had never run once before this.
+  workflow_call: {}
 
 jobs:
   lint:

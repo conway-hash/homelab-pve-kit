@@ -54,6 +54,28 @@ rest of the design already accounts for it.
 The hypervisor, plus guests **created by this repo**. VM 100 (Obsidian
 sync + DB) predates it, stays on the LAN, and is not managed here.
 
+## Deliberately not here
+
+Decided, not overlooked — don't re-propose these without a new reason.
+
+**Container CVE scanning (Trivy, Grype, Docker Scout).** Considered
+2026-08-23 and skipped. There is nothing to scan: this repo runs no
+containers, and everything it installs comes from apt, where
+`unattended-upgrades` already pulls `Debian-Security` nightly — that *is*
+the CVE story for an apt-only host. Worth revisiting only when the first
+`svc_*` role brings a pinned container image, and even then it is a
+separate concern from Renovate: Renovate answers "is there a newer
+version", a scanner answers "does what I run have known holes", and
+neither substitutes for the other. If it is ever added, it has to run on a
+**schedule** — a CVE is published against an image you already run without
+you committing anything, so a push-triggered scan would never fire.
+
+**Dependabot.** Replaced by Renovate in `homelab-vpn-kit` (commit
+`60e3aad`) and not reintroduced here. Dependabot cannot follow a version
+pinned as an Ansible variable; Renovate's `customManagers` can. Running
+both just means two bots opening the same GitHub Actions PR. Dependabot
+*security* alerts stay on — they need no config and don't collide.
+
 ## Layout
 
 ```

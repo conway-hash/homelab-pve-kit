@@ -5,8 +5,8 @@
   # halfway through instead of up front.
   ansible.builtin.stat:
     path: /usr/bin/pvesh
-  register: pvesh_bin
-  failed_when: not pvesh_bin.stat.exists
+  register: pve_host_pvesh_bin
+  failed_when: not pve_host_pvesh_bin.stat.exists
 
 - name: Install sudo
   # Proxmox's ISO install does not ship sudo, so the ci-deploy account's
@@ -63,7 +63,7 @@
 
 - name: Read the current cluster notification policy
   ansible.builtin.command: pvesh get /cluster/options --output-format json
-  register: pve_cluster_options
+  register: pve_host_cluster_options
   changed_when: false
   # command tasks are skipped under --check by default, which would leave
   # the task below with no stdout to parse. This one only reads, so it is
@@ -82,6 +82,6 @@
     #
     # The key is absent entirely on a host that has never had this set,
     # hence .get with a default rather than a subscript.
-    _notify: "{{ (pve_cluster_options.stdout | from_json).notify | default({}) }}"
+    _notify: "{{ (pve_host_cluster_options.stdout | from_json).notify | default({}) }}"
   when: _notify.get('package-updates', '') != pve_notify_package_updates
   changed_when: true

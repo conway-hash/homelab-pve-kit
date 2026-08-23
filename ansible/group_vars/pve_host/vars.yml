@@ -25,10 +25,9 @@ unattended_extra_origins:
   # an inconvenience; a permanently stale one is a security hole.
   - "site=pkgs.tailscale.com"
 
-# Tailnet name for this box: pve.ts.conway-hash.com
-#
-# <-- change this
-tailscale_hostname: pve
+# tailscale_hostname isn't declared here — the tailscale role defaults it
+# to inventory_hostname, which is already "pve". Setting it again here
+# would be the same value written twice, free to drift, for no gain.
 
 # Apt repositories, applied by the pve_repos role before anything else
 # touches apt. An out-of-the-box Proxmox enables the enterprise repos and
