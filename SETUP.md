@@ -1,9 +1,63 @@
 # Setup
 
-One-time human checklist, in order. Steps 1–2 are done on the Proxmox
-host; the rest from your workstation.
+## What must already be true
+
+This playbook takes over from a **stock Proxmox VE install that is already
+on the tailnet**. Four things it cannot do for itself — everything else it
+fixes.
+
+### 1. Proxmox VE 9 or newer (Debian 13 trixie)
+
+Installed from the ISO, nothing else done to it.
+
+Apt has two formats for "where do I download packages from": the old
+one-line `.list` files, and the newer multi-line `.sources` files. **PVE 9
+uses `.sources`; PVE 8 and older use `.list`.** This repo manages
+`.sources` only, so on PVE 8 it would write a file the system never reads
+— reporting success while changing nothing. `pve_repos` checks the Debian
+major version and stops with an explicit message rather than doing that.
+Check yours with `pveversion`.
+
+### 2. Tailscale installed and joined
+
+Ansible reaches these machines over the tailnet and nowhere else — they
+have no public address. So the host must already answer to
+`pve.ts.conway-hash.com` before anything here runs.
+
+```bash
+tailscale up --login-server=https://vpn.conway-hash.com --authkey=<key>
+```
+
+Use a **non-ephemeral** key: this is a permanent machine, and an ephemeral
+one deletes the node the moment it disconnects.
+
+(The `tailscale` role still installs and joins — that's the path for
+*guests*, which are created fresh. On the hypervisor it detects an
+existing join and does nothing.)
+
+### 3. `sudo` installed
+
+```bash
+apt install sudo
+```
+
+⚠️ The playbook **cannot** do this one for you, though it does keep sudo
+installed afterwards. Ansible's `become:` needs sudo to already exist in
+order to run any task at all — including the task that would install it.
+
+This works even though the enterprise repo is 401ing on a fresh box: only
+that one repo fails, the Debian repos are fine, and `sudo` comes from
+Debian.
+
+### 4. A `ci-deploy` account with a key and sudo rights
+
+Step 1 below.
+
+---
 
 ## 1. Create the two accounts
+
+
 
 On the Proxmox host, as root:
 
@@ -44,30 +98,28 @@ ssh-keygen -t ed25519 -f ~/.ssh/homelab_ci_deploy -N '' -C "homelab-pve ci-deplo
 Passphrase-less on purpose — Ansible and CI both need them
 non-interactively.
 
-## 2. Mint a tailnet key (first run only)
+## 2. Tailnet key — guests only, skip for the hypervisor
 
-The playbook installs Tailscale and joins the tailnet for you — but it
-needs a key to join *with*. On the coordination server:
+The Proxmox host is already on the tailnet (prerequisite 2), so the
+`tailscale` role detects the existing join and does nothing. **Nothing in
+step 3 needs a secret.**
+
+You need a key only when adding a *guest*, which is created fresh and has
+to join for the first time:
 
 ```bash
 sudo docker exec headscale headscale users list      # find your numeric ID
 sudo docker exec headscale headscale preauthkeys create --user 1
-```
 
-⚠️ **Non-ephemeral and single-use.** This is a permanent machine. An
-ephemeral key makes the node delete itself the moment it disconnects —
-that is what CI's throwaway runner wants (step 5) and the opposite of what
-a hypervisor needs. Two keys, two scopes; never reuse one for the other.
-
-```bash
 cd ansible
-cp group_vars/pve_host/secrets.yml.example group_vars/pve_host/secrets.yml
-$EDITOR group_vars/pve_host/secrets.yml     # paste the key
+cp group_vars/pve_host/secrets.yml.example group_vars/<guest>/secrets.yml
+$EDITOR group_vars/<guest>/secrets.yml               # paste the key
 ```
 
-A host that's **already** on the tailnet needs none of this — the role
-asserts on the key only when a join is actually required, so routine runs
-are credential-free. Skip straight to step 3.
+⚠️ **Non-ephemeral and single-use.** A guest is a permanent machine; an
+ephemeral key makes it delete itself the moment it disconnects. That is
+what CI's throwaway runner wants (step 4) and the opposite of what a real
+machine needs. Two keys, two scopes; never reuse one for the other.
 
 ## 3. Local run
 
@@ -78,16 +130,9 @@ ansible-playbook site.yml --limit pve_host --check --diff   # dry run FIRST
 ansible-playbook site.yml --limit pve_host
 ```
 
-⚠️ **Chicken-and-egg on a stock box:** the inventory addresses the host as
-`pve.ts.conway-hash.com`, which does not resolve until Tailscale is
-installed and joined — which is what this playbook does. On the very first
-run, point it at the LAN address instead:
-
-```bash
-ansible-playbook site.yml --limit pve_host -e ansible_host=192.168.1.x
-```
-
-Every run after that works over the tailnet name.
+The inventory addresses the host by its tailnet name, which is why
+Tailscale is a prerequisite rather than something this playbook bootstraps
+on the hypervisor.
 
 ⚠️ Always `--check --diff` first against a live hypervisor. It shows
 exactly what would change before anything is touched.

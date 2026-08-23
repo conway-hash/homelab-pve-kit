@@ -30,6 +30,14 @@ Written to converge a **stock Proxmox install**, not just one that's
 already been set up by hand. Everything is idempotent — a second run is
 `changed=0`.
 
+## What it assumes already exists
+
+A Proxmox VE 9 box that is **already on the tailnet**, with `sudo`
+installed and a `ci-deploy` account. Those four things can't bootstrap
+themselves — Ansible connects over the tailnet and escalates with sudo, so
+both have to exist before it can run at all. `SETUP.md` covers each one and
+why.
+
 ## Reading update notifications
 
 Proxmox has **no in-UI notification inbox**. Two places to look:
