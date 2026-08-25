@@ -98,14 +98,21 @@ jobs:
       - name: Install Ansible + collections
         run: |
           pipx install --include-deps ansible
+
           # community.proxmox's modules import proxmoxer, and they run on the
           # CONTROLLER (this runner) rather than the hypervisor — Debian trixie
           # ships proxmoxer 2.2.0 and the modules need >= 2.3, so installing it
           # on a machine meant to stay minimal was the wrong trade.
           #
-          # `pipx inject`, not `pip install`: pipx puts ansible in its own venv,
-          # and a system-wide pip install would be invisible to it.
-          pipx inject ansible 'proxmoxer>=2.3' requests
+          # Install it into whichever interpreter ansible-playbook ACTUALLY
+          # uses, read from its shebang. `pipx inject ansible` looks right and
+          # is not: these runners ship ansible-core in its own pipx venv, that
+          # copy wins on PATH, and the injection lands in a venv nothing runs.
+          # The failure is a module-level ImportError a long way from the cause.
+          ANSIBLE_PY=$(head -1 "$(command -v ansible-playbook)" | sed 's|^#!||')
+          echo "ansible runs on: $ANSIBLE_PY"
+          "$ANSIBLE_PY" -m pip install --quiet 'proxmoxer>=2.3' requests
+          "$ANSIBLE_PY" -c 'import proxmoxer; print("proxmoxer", proxmoxer.__version__)'
           ansible-galaxy collection install -r requirements.yml
           # For the smoke test, which reads the switches to know which guests
           # are meant to be up.
@@ -257,14 +264,21 @@ jobs:
       - name: Install Ansible + collections
         run: |
           pipx install --include-deps ansible
+
           # community.proxmox's modules import proxmoxer, and they run on the
           # CONTROLLER (this runner) rather than the hypervisor — Debian trixie
           # ships proxmoxer 2.2.0 and the modules need >= 2.3, so installing it
           # on a machine meant to stay minimal was the wrong trade.
           #
-          # `pipx inject`, not `pip install`: pipx puts ansible in its own venv,
-          # and a system-wide pip install would be invisible to it.
-          pipx inject ansible 'proxmoxer>=2.3' requests
+          # Install it into whichever interpreter ansible-playbook ACTUALLY
+          # uses, read from its shebang. `pipx inject ansible` looks right and
+          # is not: these runners ship ansible-core in its own pipx venv, that
+          # copy wins on PATH, and the injection lands in a venv nothing runs.
+          # The failure is a module-level ImportError a long way from the cause.
+          ANSIBLE_PY=$(head -1 "$(command -v ansible-playbook)" | sed 's|^#!||')
+          echo "ansible runs on: $ANSIBLE_PY"
+          "$ANSIBLE_PY" -m pip install --quiet 'proxmoxer>=2.3' requests
+          "$ANSIBLE_PY" -c 'import proxmoxer; print("proxmoxer", proxmoxer.__version__)'
           ansible-galaxy collection install -r requirements.yml
           # For the smoke test, which reads the switches to know which guests
           # are meant to be up.
