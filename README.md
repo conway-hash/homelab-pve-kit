@@ -1,13 +1,19 @@
 # homelab-pve-kit
 
-Ansible for the Proxmox VE host and the guests running on it.
+Ansible for the Proxmox VE host and every guest running on it.
 
-The hypervisor is bare metal, installed from the ISO — nothing here
-creates it. This repo **converges a machine that already exists**, which
-is why it's Ansible-only and has no OpenTofu: Terraform manages resources
-it created, and it never created this box. `terraform/` arrives the day
-the first *new* VM does, at which point its state starts empty and no
-import is needed.
+The hypervisor is bare metal, installed from the ISO — nothing here creates
+it. This repo **converges a machine that already exists**, and creates the
+guests on top of it.
+
+Ansible-only, deliberately. OpenTofu was used for the guests briefly and
+dropped: a VM on a single node is flat parameters with no resource graph to
+model, and the only thing OpenTofu actually required was somewhere to keep a
+state file — which meant either a cloud bucket or a hand-managed service on
+the hypervisor, in a repo whose stated point is needing neither. Ansible asks
+Proxmox what exists rather than remembering, which also suits a box you will
+click around in by hand. What that costs is `plan`: see
+[docs/README.md](docs/README.md).
 
 Companion repo: [homelab-vpn-kit](https://github.com/conway-hash/homelab-vpn-kit)
 — the Headscale coordination server on GCP. Deliberately separate: this
@@ -17,8 +23,8 @@ against upstream in CI.
 
 ## What it does
 
-Three roles, applied in this order — which matters on a box that has
-never been touched:
+On the hypervisor, in this order — which matters on a box that has never
+been touched:
 
 | Role | What |
 |---|---|
@@ -27,33 +33,44 @@ never been touched:
 | `pve_host` | `sudo` (Proxmox doesn't ship it), unattended upgrades with **no automatic reboot**, Tailscale added to the allowed origins, and `package-updates=always`. |
 | `pve_kiosk` | Drives the monitor physically attached to the box: host metrics, guests, pending updates, and a live tailnet graph. |
 
-### The kiosk
+And on each guest, in this order:
 
-The screen is wired to this machine, so the compositor and browser run
-here — a guest can't reach it without GPU passthrough, which would take
-the host console with it. Nothing is served off-box:
+| Role | What |
+|---|---|
+| `common` | The baseline every guest gets: qemu-guest-agent, a hardware watchdog, unattended upgrades. **First**, because everything after it is easier to recover from once the machine can reset itself when it wedges. |
+| `tailscale` | The same role the hypervisor runs, unmodified. |
+| `docker` | Engine + Compose plugin from Docker's own repo, not Debian's `docker.io`. |
+| `svc_<name>` | The service. Self-contained. |
 
+## Services
+
+Every service is optional, and every switch lives in one file:
+
+```yaml
+# ansible/group_vars/all/services.yml
+service_enabled:
+  kiosk: true
+  vault: true
 ```
-kiosk-data.timer  → collect.sh every 10s → /opt/kiosk/data.json
-kiosk-web.service → python3 http.server, bound to 127.0.0.1 only
-tty1 (autologin)  → cage -- cog http://127.0.0.1:8099/   (|| btop)
-```
 
-`cog`, not chromium: Debian's chromium pulls 174 packages onto a
-hypervisor, and even with recommends disabled still installs
-`cups-common`, `system-config-printer` and `upower`. `cog` is WebKit built
-for kiosks and adds no daemons.
+| Service | Flag | Runs on | Docs |
+|---|---|---|---|
+| Vaultwarden | `vault` | its own guest, VM 101 | [docs/vault.md](docs/vault.md) |
+| Kiosk dashboard | `kiosk` | the hypervisor | [docs/kiosk.md](docs/kiosk.md) |
 
-The tailnet graph draws this node's own link to each peer — solid for
-direct, dashed through a relay bubble for DERP, grey for offline. It's a
-hub, not a mesh, because a node can only observe its own connections.
+Three things read that file and none of them holds a second copy of it:
+`roles/pve_guests` creates or destroys the guest, `ansible/site.yml` gates the
+role — or ends the guest's play before it connects — and `deploy.yml` drops
+switched-off groups from its matrix. Turning something on is a flag plus
+whatever that service's own doc lists under **Before you turn it on**.
 
-If cage or cog fails to start, tty1 falls through to `btop`, so the screen
-never goes blank.
+The hypervisor itself has no switch. You cannot turn off the machine the rest
+of this repo runs on, and a flag that must always be true is not a flag.
 
-Written to converge a **stock Proxmox install**, not just one that's
-already been set up by hand. Everything is idempotent — a second run is
-`changed=0`.
+See [docs/README.md](docs/README.md) for what turning a service *off* actually
+does — it differs depending on whether the service owns a guest, and only one
+of the two cases is a clean removal.
+
 
 ## What it assumes already exists
 
@@ -79,21 +96,25 @@ rest of the design already accounts for it.
 The hypervisor, plus guests **created by this repo**. VM 100 (Obsidian
 sync + DB) predates it, stays on the LAN, and is not managed here.
 
+No state file, no backend, no cloud account. The only thing this repo needs
+beyond the Proxmox box itself is a tailnet to reach it over.
+
 ## Deliberately not here
 
 Decided, not overlooked — don't re-propose these without a new reason.
 
-**Container CVE scanning (Trivy, Grype, Docker Scout).** Considered
-2026-08-23 and skipped. There is nothing to scan: this repo runs no
-containers, and everything it installs comes from apt, where
-`unattended-upgrades` already pulls `Debian-Security` nightly — that *is*
-the CVE story for an apt-only host. Worth revisiting only when the first
-`svc_*` role brings a pinned container image, and even then it is a
-separate concern from Renovate: Renovate answers "is there a newer
-version", a scanner answers "does what I run have known holes", and
-neither substitutes for the other. If it is ever added, it has to run on a
-**schedule** — a CVE is published against an image you already run without
-you committing anything, so a push-triggered scan would never fire.
+**Container CVE scanning (Trivy, Grype, Docker Scout).** Skipped
+2026-08-23 on the grounds that there was nothing to scan. That reason has
+now expired: `svc_vaultwarden` brings two pinned images, one of them built
+here. Still not added, but the argument is different now and weaker — this
+is the next thing to revisit, not a settled no.
+
+If it is added: it is a separate concern from Renovate, which answers "is
+there a newer version" where a scanner answers "does what I run have known
+holes"; neither substitutes for the other. And it has to run on a
+**schedule**, because a CVE is published against an image you already run
+without you committing anything, so a push-triggered scan would never
+fire.
 
 **Dependabot.** Replaced by Renovate in `homelab-vpn-kit` (commit
 `60e3aad`) and not reintroduced here. Dependabot cannot follow a version
@@ -104,27 +125,62 @@ both just means two bots opening the same GitHub Actions PR. Dependabot
 ## Layout
 
 ```
+docs/
+├── README.md                 the switches, and what off actually means
+├── vault.md                  one file per service — setup, checks, teardown
+└── kiosk.md
+
 ansible/
 ├── site.yml                  one play per host group
 ├── group_vars/
-│   ├── all/vars.yml          tailnet facts (drift-checked against upstream)
-│   └── pve_host/vars.yml
+│   ├── all/
+│   │   ├── services.yml      ← every service's on/off switch
+│   │   └── vars.yml          tailnet facts (drift-checked against upstream)
+│   │                         + the guest baseline
+│   ├── pve_host/vars.yml
+│   └── vault_host/vars.yml
 └── roles/
-    ├── pve_host/             the hypervisor
-    ├── common/               baseline every guest gets   (not built yet)
-    └── svc_<name>/           one self-contained role per service
+    ├── pve_repos/ pve_host/ pve_guests/   the hypervisor, and the VMs it hosts
+    ├── pve_kiosk/                         a service, on the hypervisor
+    ├── tailscale/ common/ docker/         any machine
+    └── svc_<name>/                        one self-contained role per service
 ```
+
+Groups are named `<thing>_host` and machines `<thing>` — `pve_host`/`pve`,
+`vault_host`/`vault`. A group and a host sharing one name makes `--limit`
+ambiguous and Ansible only warns about it.
 
 ## Adding a service
 
-Four steps, and **none of them touch a workflow file** — CI derives its
-matrix from `site.yml`'s own `hosts:` lines.
+**To an existing guest**, six steps, and none of them touch a workflow
+file — CI derives its matrix from `site.yml`'s own `hosts:` lines crossed
+with the switches:
 
 1. `roles/svc_<name>/` — self-contained: its own tasks, templates, and a
    `defaults/main.yml` holding only secrets, each with an `assert`
-2. A group in `inventory/hosts.ini`
-3. A play in `site.yml`
-4. A `customManagers` entry in `renovate.json` if it pins a version
+2. A group in `inventory/hosts.ini`, named `<name>_host`
+3. A play in `site.yml`, gated on the flag
+4. A line in `group_vars/all/services.yml` — the name must match the group
+   minus `_host`. CI fails loudly if a play has no matching flag, so a typo
+   in either file cannot silently produce a service with no switch.
+5. `docs/<name>.md`, and a row in `docs/README.md`
+6. A `renovate:` comment **on the line immediately above** each version
+   var in that group's `vars.yml` — the `customManagers` entry in
+   `renovate.json` already matches every `group_vars/*/vars.yml`, so no
+   config change is needed. Anything in the gap between the comment and
+   the var makes Renovate stop tracking it silently: no error, just a
+   dependency that quietly never updates again.
+
+**On a new guest**, add an entry to `pve_guests:` in
+`group_vars/pve_host/vars.yml` — name, vmid, cores, RAM, disk, address. It
+gets cloned from the cloud-init template the role builds once, so there is no
+image to fetch and no disk to import per service. That needs the Proxmox API
+token to exist (SETUP.md step 6); the workflows stay untouched.
+
+The one thing a new guest DOES require in a workflow: **its own smoke
+test** in `deploy.yml`. A deploy job whose last step is `ansible-playbook`
+has proven only that Ansible reported ok — this repo has shipped a
+false-green run that way before.
 
 ## Two accounts, on purpose
 
