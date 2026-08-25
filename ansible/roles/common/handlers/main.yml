@@ -1,0 +1,20 @@
+---
+- name: Load the watchdog module now
+  # modules-load.d only takes effect at boot, and the point of this role is
+  # that the machine is protected from the moment it converges — not from
+  # whenever it next happens to reboot.
+  #
+  # `command`, not community.general.modprobe: pulling in a whole collection
+  # for one call is the kind of dependency this repo's requirements.yml
+  # explicitly refuses to carry.
+  ansible.builtin.command: modprobe i6300esb
+  changed_when: true
+  # Not fatal. Where the device is built in or already autoloaded, modprobe
+  # returning non-zero does not mean the watchdog is unavailable — the systemd
+  # unit is the real check.
+  failed_when: false
+
+- name: Restart watchdog
+  ansible.builtin.systemd_service:
+    name: watchdog
+    state: restarted

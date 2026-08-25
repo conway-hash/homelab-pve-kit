@@ -1,0 +1,103 @@
+---
+# Baseline for every guest this repo creates. Nothing service-specific, and
+# nothing Proxmox-specific beyond the guest agent — the hypervisor does not run
+# this role, it runs pve_host.
+
+- name: Check whether this machine is a Proxmox hypervisor
+  ansible.builtin.stat:
+    path: /usr/bin/pvesh
+  register: common_pvesh_bin
+
+- name: Refuse to run this role on the hypervisor
+  # pve_host and common both manage unattended-upgrades, in deliberately
+  # different ways: the hypervisor needs the Proxmox and Tailscale origins
+  # added, a guest does not. Applying both to one machine would have them
+  # fight over /etc/apt/apt.conf.d, so make the mistake loud instead of
+  # intermittent.
+  ansible.builtin.assert:
+    that: not common_pvesh_bin.stat.exists
+    fail_msg: >-
+      {{ inventory_hostname }} looks like a Proxmox hypervisor, and the
+      `common` role is for guests. The hypervisor's equivalent is `pve_host`.
+
+- name: Install the QEMU guest agent
+  # The other half of the `agent: enabled=1` that pve_guests sets. Without
+  # an agent answering inside the guest, Proxmox cannot request a clean
+  # shutdown — it waits out a timeout and then cuts power, which on a SQLite
+  # vault is how you get a corrupted database instead of a stopped VM.
+  ansible.builtin.apt:
+    name: qemu-guest-agent
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable and start the QEMU guest agent
+  ansible.builtin.systemd_service:
+    name: qemu-guest-agent
+    enabled: true
+    state: started
+
+# ── Hardware watchdog ────────────────────────────────────────────────
+#
+# Layer 4 of "come back up on its own". A kernel panic or a hard hang leaves
+# the VM in a state Proxmox still reports as running, so nothing restarts it and
+# nothing alerts. The i6300esb device emulated by QEMU (configured in
+# the pve_guests role) is reset by the daemon below on a timer; when the guest
+# stops petting it, QEMU resets the machine.
+
+- name: Load the i6300esb watchdog module at boot
+  # Usually autoloaded once the emulated device appears, but "usually" is not
+  # good enough for the thing whose whole job is catching the case where
+  # everything else already failed.
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/watchdog.conf
+    content: |
+      # Managed by Ansible (common) — edits will be overwritten
+      i6300esb
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Load the watchdog module now
+
+- name: Install the watchdog daemon
+  ansible.builtin.apt:
+    name: watchdog
+    state: present
+
+- name: Configure the watchdog daemon
+  ansible.builtin.template:
+    src: watchdog.conf.j2
+    dest: /etc/watchdog.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart watchdog
+
+- name: Enable and start the watchdog daemon
+  ansible.builtin.systemd_service:
+    name: watchdog
+    enabled: true
+    state: started
+
+# ── Unattended upgrades ──────────────────────────────────────────────
+#
+# Deliberately plainer than pve_host's version. A guest pulls from Debian only,
+# so Debian's own shipped 50unattended-upgrades already lists every origin that
+# matters and there is nothing to add — which is exactly why this is a few
+# lines here and a templated drop-in there.
+
+- name: Install unattended-upgrades
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+
+- name: Enable periodic package-list refresh and unattended upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      // Managed by Ansible (common) — edits will be overwritten
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    owner: root
+    group: root
+    mode: "0644"

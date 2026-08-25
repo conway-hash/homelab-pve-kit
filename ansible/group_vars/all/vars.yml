@@ -19,3 +19,23 @@ tailnet_base_domain: ts.conway-hash.com
 # fetches that file and fails if the two have drifted. See
 # .github/workflows/ansible-lint.yml's "tailnet fact drift" step.
 headscale_server_url: https://vpn.conway-hash.com
+
+# ── Guest baseline ───────────────────────────────────────────────────
+#
+# Applied by the `common` role to every guest this repo creates. Here rather
+# than in any one guest's group_vars because there is no reason two guests
+# should disagree about them, and no reason to write them twice.
+
+# The emulated i6300esb watchdog resets the guest if the daemon inside it stops
+# writing to /dev/watchdog for this many seconds. This is the backstop for a
+# kernel panic or a hard hang — the failure mode where Proxmox still reports
+# the VM as running and so nothing else intervenes.
+#
+# Proxmox's HA manager would handle a crashed guest properly, but HA needs a
+# cluster with quorum; standing up corosync on a single node to protect one VM
+# adds more that can break than it covers.
+guest_watchdog_timeout: 60
+
+# How often the daemon pets it. Well under the timeout, so ordinary scheduling
+# jitter never looks like a hang.
+guest_watchdog_interval: 15

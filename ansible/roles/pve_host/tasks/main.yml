@@ -85,3 +85,51 @@
     _notify: "{{ (pve_host_cluster_options.stdout | from_json).notify | default({}) }}"
   when: _notify.get('package-updates', '') != pve_notify_package_updates
   changed_when: true
+
+# ── Backups ──────────────────────────────────────────────────────────
+#
+# A vault with no backup is a single disk away from every password being gone,
+# and unlike most services there is no re-deriving the contents. Snapshot mode
+# rather than stop mode so the guest stays up; Vaultwarden's SQLite database is
+# in WAL mode and survives it, and the alternative is a nightly outage.
+#
+# This lives here rather than in svc_vaultwarden because vzdump is a hypervisor
+# facility — the guest has no say in whether it is backed up, and shouldn't.
+
+- name: Read the current backup jobs
+  ansible.builtin.command: pvesh get /cluster/backup --output-format json
+  register: pve_host_backup_jobs
+  changed_when: false
+  # Read-only, so it is safe — and necessary — under --check too. Otherwise
+  # the task below has no stdout to compare against and a dry run reports a
+  # change it would not actually make.
+  check_mode: false
+
+- name: Create the backup jobs
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - create
+      - /cluster/backup
+      - --comment=homelab-pve-kit {{ item.name }}
+      - --vmid={{ item.vmid }}
+      - --storage={{ pve_backup_storage }}
+      - --schedule={{ item.backup.schedule }}
+      - --mode={{ pve_backup_mode }}
+      - --prune-backups=keep-daily={{ item.backup.keep_daily }},keep-weekly={{ item.backup.keep_weekly }}
+      - --enabled=1
+      - --notification-mode=notification-system
+  # Derived from the guest list rather than a parallel list of its own, so a
+  # vmid is written exactly once. A guest with no `backup:` key gets no job.
+  loop: "{{ pve_guests | selectattr('backup', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.name }} (vmid {{ item.vmid }})"
+  # pvesh has no upsert: creating the same job twice produces two jobs that
+  # both run. Matched on the comment because that is the only field this repo
+  # controls that Proxmox keeps verbatim — the job ID is generated.
+  # `default('')` matters: a job created by hand in the web UI may have no
+  # comment field at all, and map() over a missing attribute raises rather than
+  # skipping — which would break this task on exactly the hosts that have the
+  # most existing configuration to preserve.
+  when: "'homelab-pve-kit ' + item.name not in (pve_host_backup_jobs.stdout | from_json | map(attribute='comment', default='') | list)"
+  changed_when: true

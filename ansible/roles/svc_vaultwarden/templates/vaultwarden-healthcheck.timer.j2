@@ -1,0 +1,15 @@
+# Managed by Ansible (svc_vaultwarden) — edits will be overwritten.
+
+[Unit]
+Description=Check the vault answers every {{ vaultwarden_selfheal_interval }}
+
+[Timer]
+# The delay before the first check is generous on purpose: on a cold boot the
+# stack is still building and starting, and a check that fires into that would
+# count healthy startup as failure.
+OnBootSec=5min
+OnUnitActiveSec={{ vaultwarden_selfheal_interval }}
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

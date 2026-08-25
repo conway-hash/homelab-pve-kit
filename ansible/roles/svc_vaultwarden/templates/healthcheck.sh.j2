@@ -1,0 +1,44 @@
+#!/bin/sh
+# Managed by Ansible (svc_vaultwarden) — edits will be overwritten.
+#
+# Layer 3. Docker restarts a container whose process EXITS; it does nothing
+# about one that is running and not answering. That leaves two real failure
+# modes uncovered — a wedged Vaultwarden, and a Caddy sitting on a certificate
+# it failed to renew — in both of which every client sees an outage while
+# `docker ps` reports everything up.
+#
+# This asks the question a client asks, and restarts the stack when the answer
+# stops coming.
+
+set -eu
+
+STATE=/run/vaultwarden-healthcheck.failures
+THRESHOLD={{ vaultwarden_selfheal_failures }}
+
+# --resolve, not a Host header: it sets SNI correctly, so Caddy picks the right
+# certificate and curl genuinely verifies it. An expired or missing certificate
+# has to FAIL this check — that is one of the two things it exists to catch —
+# so verification is never skipped.
+if curl -fsS --max-time 10 \
+     --resolve "{{ vaultwarden_domain }}:443:127.0.0.1" \
+     "https://{{ vaultwarden_domain }}/alive" >/dev/null 2>&1; then
+  rm -f "$STATE"
+  exit 0
+fi
+
+FAILURES=$(( $(cat "$STATE" 2>/dev/null || echo 0) + 1 ))
+echo "$FAILURES" > "$STATE"
+
+# Restarting on a single miss would make a slow reload or a moment of load look
+# like a fault, and turn this into the outage it was meant to prevent.
+if [ "$FAILURES" -lt "$THRESHOLD" ]; then
+  echo "vault did not answer ($FAILURES/$THRESHOLD) — not restarting yet"
+  exit 0
+fi
+
+echo "vault did not answer $FAILURES times in a row — restarting the stack"
+rm -f "$STATE"
+
+# --no-block: this script runs from a unit, and restarting a target that would
+# wait on this same script's unit deadlocks systemd.
+systemctl restart --no-block vaultwarden.service

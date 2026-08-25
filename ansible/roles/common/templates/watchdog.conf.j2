@@ -1,0 +1,23 @@
+# Managed by Ansible (common) — edits will be overwritten.
+#
+# Deliberately minimal. watchdog.conf can also reset the machine on high load
+# average, low free memory, or a failing ping, and every one of those is a
+# plausible way to reboot a healthy vault in a loop at 3am. The only condition
+# armed here is the one with no false positives: the daemon itself stopped
+# running, which means the kernel is no longer scheduling userspace.
+
+watchdog-device = /dev/watchdog
+
+# QEMU resets the guest if the device is not written to within this many
+# seconds. Comfortably longer than interval so ordinary scheduling jitter never
+# trips it.
+watchdog-timeout = {{ guest_watchdog_timeout }}
+
+# How often the daemon pets the device.
+interval = {{ guest_watchdog_interval }}
+
+# Lock the daemon into RAM and run it at real-time priority, so the one process
+# responsible for proving the machine is alive cannot itself be starved out by
+# whatever is going wrong.
+realtime = yes
+priority = 1

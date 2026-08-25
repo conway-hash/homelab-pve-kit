@@ -1,0 +1,81 @@
+---
+# Docker Engine + the Compose plugin, from Docker's own apt repository.
+#
+# Not Debian's docker.io package: that ships an Engine a major version or two
+# behind and no `docker compose` subcommand at all, which would mean falling
+# back to the retired standalone docker-compose binary.
+#
+# An ordinary local role referenced by bare name, per this repo's rule that
+# shared logic is a role and not a collection. Every future svc_* guest reuses
+# it as-is; nothing in here knows what it is going to run.
+
+- name: Install apt prerequisites for the Docker repository
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure the apt keyring directory exists
+  # Present by default on current Debian, but not guaranteed on a minimal
+  # image — and get_url would fail with a bare ENOENT that says nothing about
+  # what is actually missing.
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the Docker apt keyring
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/debian/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add the Docker apt repository
+  # deb822 .sources, matching how pve_repos manages the hypervisor's
+  # repositories and the format Debian 13 uses. ansible.builtin.apt_repository
+  # writes the older one-line .list format and is deprecated for removal in
+  # ansible-core 2.25.
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: [deb]
+    uris: https://download.docker.com/linux/debian
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: [stable]
+    # Derived rather than held as a var: it is a fact about the machine, not a
+    # choice anyone makes, and a var would only create somewhere for it to be
+    # set wrong.
+    architectures: "{{ 'amd64' if ansible_facts['architecture'] == 'x86_64' else 'arm64' }}"
+    signed_by: /etc/apt/keyrings/docker.asc
+    enabled: true
+  notify: Refresh apt cache after Docker repo change
+
+- name: Refresh apt cache now if the repository changed
+  # The handler would otherwise fire at the end of the play, long after the
+  # install below has already failed against a cache that has never heard of
+  # docker-ce. Same reason the tailscale role does this.
+  ansible.builtin.meta: flush_handlers
+
+- name: Install Docker Engine and the Compose plugin
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
+
+- name: Enable and start Docker
+  # Layer 2 of "come back up on its own". Every stack in this repo declares
+  # `restart: unless-stopped`, and the Docker daemon is what honours that after
+  # a reboot — a container restart policy on a disabled daemon restarts nothing.
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started

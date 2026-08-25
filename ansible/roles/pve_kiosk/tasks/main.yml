@@ -4,6 +4,12 @@
 # passthrough, which would hand the card to the VM and take the host
 # console with it. The data is all local anyway, so nothing is gained by
 # moving it off.
+#
+# Whether this role runs at all is service_enabled.kiosk, applied as a
+# role-level `when:` in site.yml. Deliberately NOT a per-task condition in
+# here: that is what it used to be, and it meant kiosk_enabled=false still
+# installed cage, cog and every unit while skipping only the autologin wiring
+# — a switch that looked like an off but was not one.
 
 - name: Install the kiosk stack
   # cage is a single-purpose Wayland compositor: it runs exactly one
@@ -103,7 +109,6 @@
       if [ "$(tty)" = "/dev/tty1" ]; then
           cage -- cog "http://127.0.0.1:{{ kiosk_port }}/" || btop
       fi
-  when: kiosk_enabled | bool
 
 - name: Remove the old bare btop autostart
   # It lived outside the managed block, so it would otherwise still run
@@ -112,11 +117,9 @@
     path: /root/.bash_profile
     marker: "# {mark} pre-kiosk btop"
     state: absent
-  when: kiosk_enabled | bool
 
 - name: Strip the unmanaged btop stanza from .bash_profile
   ansible.builtin.replace:
     path: /root/.bash_profile
     regexp: '(?m)^\s*if \[ "\$\(tty\)" = "/dev/tty1" \]; then\n\s*btop\n\s*fi\s*$'
     replace: ''
-  when: kiosk_enabled | bool

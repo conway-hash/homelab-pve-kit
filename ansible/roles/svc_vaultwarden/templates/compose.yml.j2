@@ -1,0 +1,44 @@
+# Managed by Ansible (svc_vaultwarden) — edits will be overwritten.
+
+services:
+  vaultwarden:
+    image: vaultwarden/server:{{ vaultwarden_version }}
+    container_name: vaultwarden
+    # Layer 2: the container's process exited. This is the one Docker actually
+    # acts on — restart policies read exit codes, not healthchecks. A container
+    # that is running but wedged is handled by the self-heal timer instead, not
+    # here.
+    restart: unless-stopped
+    env_file:
+      - ./vaultwarden.env
+    volumes:
+      - ./data:/data
+    # No `ports:`. Publishing 80 here would put an unauthenticated plaintext
+    # Vaultwarden on the guest's LAN address, beside the TLS one, defeating the
+    # entire point of the proxy in front of it.
+
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+      args:
+        CADDY_VERSION: "{{ caddy_version }}"
+    container_name: vaultwarden-caddy
+    restart: unless-stopped
+    env_file:
+      - ./caddy.env
+    ports:
+      - "443:443"
+      # HTTP/3. Caddy serves it by default and Bitwarden's mobile clients will
+      # use it; without the UDP mapping they fall back to TCP after a stall.
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-data:/data
+      - ./caddy-config:/config
+    depends_on:
+      - vaultwarden
+    # Port 80 is deliberately not published. Nothing needs it: DNS-01 means
+    # there is no HTTP challenge to answer, and an HTTP-to-HTTPS redirect for a
+    # host only reachable over the tailnet would be answering a request that
+    # cannot arrive.

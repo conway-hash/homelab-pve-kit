@@ -1,0 +1,9 @@
+# Managed by Ansible (svc_vaultwarden) — edits will be overwritten.
+
+[Unit]
+Description=Check the vault answers, and restart the stack if it stops
+After=vaultwarden.service
+
+[Service]
+Type=oneshot
+ExecStart={{ vaultwarden_dir }}/healthcheck.sh

@@ -1,0 +1,185 @@
+---
+# Vaultwarden behind its own Caddy, both as containers on this guest.
+#
+# Caddy is here — beside the thing it fronts — and not on a shared proxy
+# machine. That pattern existed in this project once and was retired: it bought
+# prettier URLs at the cost of a wildcard certificate and a DNS-write
+# credential living on a third box that then had to be maintained forever. A
+# per-service Caddy has neither problem. The certificate covers one name, the
+# token sits on the one machine that needs it, and when this guest is down
+# there is nothing left for a proxy to proxy anyway.
+
+- name: Refuse to deploy without the admin token
+  ansible.builtin.assert:
+    that: svc_vaultwarden_admin_token | length > 0
+    fail_msg: >-
+      svc_vaultwarden_admin_token is unset. /admin would be left either wide open
+      or unusable. Generate an Argon2 hash with
+      `docker run --rm -it vaultwarden/server /vaultwarden hash` and put it in
+      group_vars/vault_host/secrets.yml — see SETUP.md.
+
+- name: Refuse to deploy without the Cloudflare API token
+  ansible.builtin.assert:
+    that: svc_vaultwarden_cloudflare_api_token | length > 0
+    fail_msg: >-
+      svc_vaultwarden_cloudflare_api_token is unset, so Caddy cannot answer the ACME DNS-01
+      challenge and will never obtain a certificate. Vaultwarden's browser
+      extension and mobile apps refuse a non-HTTPS server URL outright, so this
+      is not a nice-to-have — without it the vault is unusable by every client
+      that matters. Mint one from Cloudflare's "Edit zone DNS" template —
+      see docs/vault.md.
+
+- name: Create the stack directory
+  ansible.builtin.file:
+    path: "{{ vaultwarden_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Create the data directories
+  ansible.builtin.file:
+    path: "{{ vaultwarden_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - data          # Vaultwarden's SQLite database, attachments, and RSA keys
+    - caddy-data    # issued certificates and the ACME account key
+    - caddy-config  # Caddy's own autosaved config
+
+- name: Write the Caddy build file
+  # Built rather than pulled. The official caddy image has no DNS provider
+  # modules compiled in, and the ready-made third-party images that do are not
+  # something to put in front of a password vault on trust. This builds the
+  # official image plus the official caddy-dns/cloudflare plugin, from source,
+  # on the machine.
+  ansible.builtin.template:
+    src: Dockerfile.caddy.j2
+    dest: "{{ vaultwarden_dir }}/Dockerfile.caddy"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart the vaultwarden stack
+
+- name: Write the Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: "{{ vaultwarden_dir }}/Caddyfile"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart the vaultwarden stack
+
+- name: Write the compose file
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ vaultwarden_dir }}/compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart the vaultwarden stack
+
+- name: Write the Vaultwarden environment file
+  ansible.builtin.template:
+    src: vaultwarden.env.j2
+    dest: "{{ vaultwarden_dir }}/vaultwarden.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart the vaultwarden stack
+
+- name: Write the Caddy environment file
+  ansible.builtin.template:
+    src: caddy.env.j2
+    dest: "{{ vaultwarden_dir }}/caddy.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart the vaultwarden stack
+
+# ── Layer 2: the guest booted ────────────────────────────────────────
+#
+# `restart: unless-stopped` on the containers already brings them back after a
+# reboot once dockerd is up. The unit exists anyway for two things the restart
+# policy cannot do: give Ansible and the self-heal timer below a single name to
+# restart the whole stack by, and make "is the vault supposed to be running"
+# something `systemctl status` can answer.
+
+- name: Install the stack unit
+  ansible.builtin.template:
+    src: vaultwarden.service.j2
+    dest: /etc/systemd/system/vaultwarden.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable and start the stack
+  ansible.builtin.systemd_service:
+    name: vaultwarden
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# ── Layer 3: it is running but not answering ─────────────────────────
+#
+# Docker's restart policy fires when a container's process EXITS. It does not
+# read healthcheck results — an unhealthy container is restarted by nothing. So
+# a wedged Vaultwarden, or a Caddy sitting on an expired certificate, would stay
+# "up" indefinitely with no client able to reach it.
+#
+# This closes that gap the same way the kiosk does its collection: a systemd
+# timer running one small script.
+
+- name: Install the self-heal script
+  ansible.builtin.template:
+    src: healthcheck.sh.j2
+    dest: "{{ vaultwarden_dir }}/healthcheck.sh"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install the self-heal unit and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - vaultwarden-healthcheck.service
+    - vaultwarden-healthcheck.timer
+  notify: Reload systemd
+
+- name: Flush handlers before verifying
+  # The checks below assert on the running stack. Without this, they would run
+  # against whatever was up BEFORE this play's config changes were applied, and
+  # pass or fail for reasons that have nothing to do with what just changed.
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the self-heal timer
+  ansible.builtin.systemd_service:
+    name: vaultwarden-healthcheck.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Wait for Vaultwarden to answer over HTTPS
+  # The real thing a client does, end to end: a valid certificate for the real
+  # hostname, terminated by Caddy, proxied to a Vaultwarden that is awake.
+  # --resolve rather than a Host header so SNI is set correctly and the
+  # certificate is genuinely verified rather than skipped.
+  #
+  # First convergence includes an ACME issuance, hence the patient retry.
+  ansible.builtin.uri:
+    url: "https://{{ vaultwarden_domain }}/alive"
+    status_code: 200
+  register: svc_vaultwarden_alive
+  until: svc_vaultwarden_alive is success
+  retries: 30
+  delay: 10
+  changed_when: false

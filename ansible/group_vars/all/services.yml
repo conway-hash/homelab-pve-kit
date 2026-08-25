@@ -1,0 +1,31 @@
+---
+# Which services this host runs. THE place to turn something on or off.
+#
+# Every service in this repo is optional and off-able. Nothing outside this
+# file needs editing to drop one: pve_guests removes its guest, site.yml stops
+# converging it, and CI stops deploying to it — all three read this same map,
+# so there is no second switch anywhere to forget.
+#
+# A service set to false is not merely skipped at the end. The gate is at the
+# role, so nothing gets installed, no unit is written, and no package is
+# pulled. Turning one off after the fact does NOT uninstall what a previous run
+# already put there — see docs/README.md for what removing a service actually
+# takes.
+#
+# Adding a service means adding a line here, and its name has to match the
+# guest group in inventory (`<name>_host`) — CI derives its deploy matrix from
+# exactly that pairing and fails loudly if a group has no line here.
+#
+# `service_enabled`, not `services`: with inject_facts_as_vars on (the
+# default), a bare `services` would be shadowed the moment any play gathers
+# service facts.
+service_enabled:
+  # Runs ON the hypervisor. The screen is physically wired to that box, so
+  # there is no guest to create — this is purely a role toggle.
+  # See docs/kiosk.md.
+  kiosk: true
+
+  # Its own guest, VM 101. Turning this off DESTROYS that VM on the next run
+  # of the hypervisor play — use --check --diff first if you want warning.
+  # See docs/vault.md.
+  vault: true

@@ -1,0 +1,27 @@
+---
+# This file holds ONLY vars with no safe default — secrets and
+# required-but-unset values, declared as "" with an ansible.builtin.assert in
+# tasks/main.yml. Everything with a real default (the guest list, the template,
+# datastores) lives in group_vars/pve_host/vars.yml.
+
+# Secret half of the Proxmox API token. The user and token ID are not secret
+# and live in group_vars; only this is.
+#
+# Shown exactly once, when the token is created:
+#
+#   pveum user token add automation@pve homelab --privsep 0
+#
+# See docs/README.md.
+pve_guests_api_token_secret: ""
+
+# Public half of the ci-deploy key, planted by cloud-init at first boot.
+#
+# This is what makes a guest different from the hypervisor: SETUP.md has to
+# create ci-deploy on the Proxmox host by hand because nothing could reach it
+# to do so, but a guest gets the account before it has finished booting.
+#
+# Not a secret — it is a public key — but it has no safe default and a guest
+# built without it is unreachable, so it belongs here with an assert rather
+# than in group_vars. CI derives it from the deploy key with `ssh-keygen -y`,
+# so no second secret holds a second copy of one keypair.
+pve_guests_ssh_public_key: ""

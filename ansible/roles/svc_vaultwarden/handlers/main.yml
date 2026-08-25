@@ -1,0 +1,16 @@
+---
+# Named distinctly from every other role's handlers: handler names are
+# play-global, so anything generic would collide silently.
+
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Restart the vaultwarden stack
+  # One handler, not a separate "rebuild" one: the unit's ExecStart already
+  # passes `--build`, so a restart re-runs the build unconditionally. A second
+  # handler that did the same thing under a different name would just be two
+  # ways to spell one action.
+  ansible.builtin.systemd_service:
+    name: vaultwarden
+    state: restarted
