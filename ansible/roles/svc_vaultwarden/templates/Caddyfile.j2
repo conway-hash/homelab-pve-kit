@@ -17,6 +17,19 @@
 		# subdomain of a zone in Cloudflare — so a public CA can validate it
 		# even though only tailnet members can resolve or reach it.
 		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+
+		# Public resolvers, explicitly, for the challenge only.
+		#
+		# The plugin works out which Cloudflare zone owns a name by walking up
+		# its SOA records, and by default it asks the system resolver. On a
+		# tailnet member that is MagicDNS, which answers SOA queries with
+		# NOTIMP — so zone discovery fails and no TXT record is ever
+		# presented. The error names the domain, not the resolver, which makes
+		# it look like a Cloudflare permissions problem.
+		#
+		# NOT 1.1.1.1: this LAN is 1.1.1.0/24, so that address is a machine
+		# down the hall rather than Cloudflare's resolver.
+		resolvers {{ vaultwarden_acme_resolvers | join(' ') }}
 	}
 
 	# Vaultwarden is not published on the host at all; it is reachable only
