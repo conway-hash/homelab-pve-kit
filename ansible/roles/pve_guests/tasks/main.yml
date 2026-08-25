@@ -29,16 +29,6 @@
       only way back is the Proxmox console. Set it to the output of
       `ssh-keygen -y -f ~/.ssh/homelab_ci_deploy`.
 
-- name: Split the guest list by its service switch
-  # Computed once. The same expression inline on six loops would be six places
-  # for one fact to disagree with itself, which is the duplication this repo
-  # has already paid down once elsewhere.
-  ansible.builtin.set_fact:
-    pve_guests_on: "{{ pve_guests | selectattr('service', 'in', _on) | list }}"
-    pve_guests_off: "{{ pve_guests | rejectattr('service', 'in', _on) | list }}"
-  vars:
-    _on: "{{ service_enabled | dict2items | selectattr('value') | map(attribute='key') | list }}"
-
 # ── What is about to happen ──────────────────────────────────────────
 #
 # community.proxmox.proxmox_kvm does NOT support check mode, so under
@@ -58,21 +48,32 @@
   # report every guest as new.
   check_mode: false
 
+- name: Work out what has to change
+  # Computed once, from the switches crossed with what is actually on the box.
+  # The same expressions inline on six loops would be six places for one fact
+  # to disagree with itself.
+  ansible.builtin.set_fact:
+    pve_guests_create: "{{ _on | rejectattr('vmid', 'in', _have) | list }}"
+    pve_guests_present: "{{ _on | selectattr('vmid', 'in', _have) | list }}"
+    pve_guests_destroy: "{{ _off | selectattr('vmid', 'in', _have) | list }}"
+    pve_guests_on: "{{ _on }}"
+  vars:
+    _enabled: "{{ service_enabled | dict2items | selectattr('value') | map(attribute='key') | list }}"
+    _on: "{{ pve_guests | selectattr('service', 'in', _enabled) | list }}"
+    _off: "{{ pve_guests | rejectattr('service', 'in', _enabled) | list }}"
+    # `qm list` pads its columns, hence the trim before the id is pulled off
+    # the front of each row. Line 0 is the header.
+    _have: "{{ pve_guests_existing.stdout_lines[1:] | map('trim')
+               | map('regex_replace', '^([0-9]+).*$', '\\1') | map('int') | list }}"
+
 - name: Show what will change
   ansible.builtin.debug:
-    msg: "{{ _plan }}"
-  vars:
-    _have: "{{ pve_guests_existing.stdout_lines[1:] | map('trim') | map('regex_replace', '^([0-9]+).*$', '\\1') | list }}"
-    _create: "{{ pve_guests_on | rejectattr('vmid', 'in', _have | map('int') | list) | list }}"
-    _keep: "{{ pve_guests_on | selectattr('vmid', 'in', _have | map('int') | list) | list }}"
-    _destroy: "{{ pve_guests_off | selectattr('vmid', 'in', _have | map('int') | list) | list }}"
-    _plan: >-
-      {{
-        ['CREATE:  ' + (_create | map(attribute='name') | join(', ') | default('none', true))]
-        + ['KEEP:    ' + (_keep | map(attribute='name') | join(', ') | default('none', true))]
-        + ['DESTROY: ' + (_destroy | map(attribute='name') | join(', ') | default('none', true))
-           + (' ⚠️  THIS DELETES THE DISK' if _destroy | length > 0 else '')]
-      }}
+    msg:
+      - "CREATE:  {{ pve_guests_create | map(attribute='name') | join(', ') | default('none', true) }}"
+      - "PRESENT: {{ pve_guests_present | map(attribute='name') | join(', ') | default('none', true) }}"
+      - >-
+        DESTROY: {{ pve_guests_destroy | map(attribute='name') | join(', ') | default('none', true)
+        }}{{ '  ⚠️  THIS DELETES THE DISK' if pve_guests_destroy | length > 0 else '' }}
 
 # ── The cloud-init template ──────────────────────────────────────────
 #
@@ -138,7 +139,12 @@
     validate_certs: "{{ pve_api_validate_certs }}"
     node: "{{ pve_node }}"
     clone: "{{ pve_template_name }}"
-    vmid: "{{ item.vmid }}"
+    # `vmid` is the SOURCE for a clone and `newid` is the machine being made.
+    # Passing the target as vmid makes the module look for a template that is
+    # not there and fail with "VM with vmid N does not exist in cluster",
+    # which reads like the clone failed rather than like it was misaddressed.
+    vmid: "{{ pve_template_vmid }}"
+    newid: "{{ item.vmid }}"
     name: "{{ item.name }}"
     # A full clone, not linked: a linked clone keeps a permanent dependency on
     # the template, so the template can never be rebuilt or removed without
@@ -149,7 +155,10 @@
   delegate_to: localhost
   become: false
   no_log: true
-  loop: "{{ pve_guests_on }}"
+  # Only the missing ones. Cloning onto a vmid that already exists is an
+  # error, so without this the role works exactly once and fails on every run
+  # after it.
+  loop: "{{ pve_guests_create }}"
   loop_control:
     label: "{{ item.name }} (vmid {{ item.vmid }})"
 
@@ -252,6 +261,6 @@
   delegate_to: localhost
   become: false
   no_log: true
-  loop: "{{ pve_guests_off }}"
+  loop: "{{ pve_guests_destroy }}"
   loop_control:
     label: "{{ item.name }} (vmid {{ item.vmid }})"
