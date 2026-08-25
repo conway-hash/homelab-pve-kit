@@ -104,16 +104,18 @@ The Proxmox host is already on the tailnet (prerequisite 2), so the
 `tailscale` role detects the existing join and does nothing. **Nothing in
 step 3 needs a secret.**
 
-You need a key only when adding a *guest*, which is created fresh and has
-to join for the first time:
+You need a key only when a service brings a *guest*, which is created fresh
+and has to join for the first time. Which services those are, and where each
+one wants its key, is in that service's own doc — this is just how the key is
+minted:
 
 ```bash
 sudo docker exec headscale headscale users list      # find your numeric ID
 sudo docker exec headscale headscale preauthkeys create --user 1
 
 cd ansible
-cp group_vars/pve_host/secrets.yml.example group_vars/<guest>/secrets.yml
-$EDITOR group_vars/<guest>/secrets.yml               # paste the key
+cp group_vars/<group>/secrets.yml.example group_vars/<group>/secrets.yml
+$EDITOR group_vars/<group>/secrets.yml               # paste the key
 ```
 
 ⚠️ **Non-ephemeral and single-use.** A guest is a permanent machine; an
@@ -121,7 +123,7 @@ ephemeral key makes it delete itself the moment it disconnects. That is
 what CI's throwaway runner wants (step 4) and the opposite of what a real
 machine needs. Two keys, two scopes; never reuse one for the other.
 
-## 3. Local run
+## 3. Local run — the hypervisor
 
 ```bash
 cd ansible
@@ -139,10 +141,24 @@ exactly what would change before anything is touched.
 
 ## 4. GitHub secrets, for CI deploys
 
-| Secret | What |
-|---|---|
-| `PVE_SSH_PRIVATE_KEY` | Contents of `~/.ssh/homelab_ci_deploy` |
-| `TS_AUTHKEY` | Headscale pre-auth key, **ephemeral + reusable** |
+| Secret | What | Needed by |
+|---|---|---|
+| `PVE_SSH_PRIVATE_KEY` | Contents of `~/.ssh/homelab_ci_deploy` | everything |
+| `TS_AUTHKEY` | Headscale pre-auth key, **ephemeral + reusable** | everything |
+| `PVE_API_TOKEN_SECRET` | Secret half of the Proxmox API token (step 6) | creating guests |
+
+Services bring their own secrets on top of these, named
+`SVC_<SERVICE>_<THING>` so you can tell at a glance which belong to what — and
+delete exactly those when you retire a service. They are listed in each
+service's own doc rather than here — a service you never turn on should not leave you
+wondering which of these rows you skipped. See
+[docs/README.md](docs/README.md).
+
+⚠️ Where a service needs a tailnet key of its own, it is **not** `TS_AUTHKEY`.
+The runner's is ephemeral so a throwaway node reaps itself; a permanent
+machine's must be non-ephemeral, because an ephemeral key makes it delete
+itself the moment it disconnects. Two keys, two scopes; never reuse one for
+the other.
 
 ```bash
 gh secret set PVE_SSH_PRIVATE_KEY < ~/.ssh/homelab_ci_deploy
@@ -168,6 +184,82 @@ ssh ci-deploy@pve 'sudo mail'          # nightly reports land here
 ```
 
 Also visible with zero config at **Node → Updates** in the web UI.
+
+## 6. A Proxmox API token — only if you are creating guests
+
+Skip this entirely if you only run the hypervisor itself. Guests are created
+through the Proxmox API, which needs its own token — not the root password,
+and not shared with anything else.
+
+On the host, as root:
+
+```bash
+pveum role add Provisioner -privs \
+  "Datastore.Allocate Datastore.AllocateSpace Datastore.Audit \
+   Pool.Allocate Sys.Audit Sys.Modify \
+   VM.Allocate VM.Audit VM.Backup VM.Clone \
+   VM.Config.CDROM VM.Config.Cloudinit VM.Config.CPU VM.Config.Disk \
+   VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options \
+   VM.GuestAgent.Audit VM.Migrate VM.PowerMgmt"
+
+pveum user add automation@pve
+pveum aclmod / -user automation@pve -role Provisioner
+pveum user token add automation@pve homelab --privsep 0
+```
+
+⚠️ `--privsep 0` matters. With privilege separation **on**, the token gets its
+own empty ACL rather than inheriting the user's, so every call returns 403 and
+the error says nothing about why.
+
+The secret is shown **once**. Only that secret half is a secret — the user
+(`automation@pve`) and token ID (`homelab`) are ordinary values and already
+live in `group_vars/pve_host/vars.yml`. Set the secret as
+`PVE_API_TOKEN_SECRET`.
+
+`Sys.Modify` is in there for the guest's network device, and `VM.Config.HWType`
+covers the watchdog. Dropping either produces a 403 partway through, with a
+half-built VM.
+
+⚠️ **PVE 9 removed `VM.Monitor`** — it was replaced by the `VM.GuestAgent.*`
+family. Older guides still list it, and `pveum role add` rejects the whole
+command if any single privilege is invalid, leaving no role behind while the
+`pveum user add` that follows still succeeds. If you hit that, the fix is to
+re-run the role and `aclmod` lines only; the user and token are already there.
+
+To see the valid set on your own host:
+
+```bash
+grep -oE "VM\.[A-Za-z.]+" /usr/share/perl5/PVE/AccessControl.pm | sort -u
+```
+
+There is nothing else to set up — no state file, no bucket, no cloud account.
+That was the point of dropping OpenTofu.
+
+## 7. Turn on the services you want
+
+Everything above is the host. Services are separate, optional, and each has
+its own file:
+
+```yaml
+# ansible/group_vars/all/services.yml
+service_enabled:
+  kiosk: true
+  vault: true
+```
+
+| Service | Flag | Setup |
+|---|---|---|
+| Vaultwarden | `vault` | [docs/vault.md](docs/vault.md) |
+| Kiosk dashboard | `kiosk` | [docs/kiosk.md](docs/kiosk.md) |
+
+Each doc lists what that service needs **before** you turn it on — its
+credentials, its GitHub secrets, and how to check it actually works — plus
+what turning it off does, which is not the same for a service that owns a
+guest as for one that doesn't. Start at [docs/README.md](docs/README.md).
+
+Nothing here needs editing to skip a service. Leave its flag `false` and
+Ansible will not create its guest, will not converge it, and CI will
+not deploy to it.
 
 ## Later: real push notifications
 
