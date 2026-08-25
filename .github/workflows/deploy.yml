@@ -386,17 +386,20 @@ jobs:
           fi
 
           # Registration being open would let anything that reaches the tailnet
-          # create an account on the vault server. Vaultwarden advertises the
-          # setting in /api/config, so this is checkable from outside rather
-          # than trusting that the template rendered.
-          SIGNUPS=$(curl -fsS --max-time 30 "https://${DOMAIN}/api/config" \
-            | jq -r '.featureStates.signups // .environment.signupsAllowed // "unknown"' 2>/dev/null || echo "unknown")
+          # create an account on the vault server.
+          #
+          # Read from the RUNNING container, not from /api/config: Vaultwarden
+          # stopped exposing the signups flag there, so the previous version of
+          # this check quietly degraded to a warning and verified nothing. A
+          # check that cannot fail is worse than no check, because it reads
+          # like coverage.
+          SIGNUPS=$(ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
+            ci-deploy@"${DOMAIN}" \
+            'sudo docker exec vaultwarden printenv SIGNUPS_ALLOWED' 2>/dev/null | tr -d '\r')
           if [ "$SIGNUPS" = "false" ]; then
             echo "OK: signups are closed"
-          elif [ "$SIGNUPS" = "unknown" ]; then
-            echo "::warning::could not read the signups setting from /api/config — check it by hand"
           else
-            echo "::error::signups are '$SIGNUPS', expected 'false' — anyone on the tailnet can register on your vault"
+            echo "::error::SIGNUPS_ALLOWED is '${SIGNUPS:-unreadable}', expected 'false' — anyone on the tailnet can register on your vault"
             FAILED=1
           fi
 
