@@ -1,6 +1,0 @@
----
-# Named distinctly from pve_repos' handler: handler names are play-global,
-# so two roles both calling theirs "Refresh apt cache" would collide.
-- name: Refresh apt cache after Tailscale repo change
-  ansible.builtin.apt:
-    update_cache: true

@@ -32,10 +32,19 @@
   loop: "{{ pve_repositories }}"
   loop_control:
     label: "{{ item.name }} (enabled={{ item.enabled }})"
-  notify: Refresh apt cache
 
-- name: Refresh apt cache now if the repositories changed
-  # The handler runs at the end of the play, which is far too late — every
-  # package task below this role would still be working from the stale
-  # (or 401-poisoned) cache. Flush immediately instead.
-  ansible.builtin.meta: flush_handlers
+- name: Refresh apt cache for the Proxmox repositories
+  # A plain task, not a handler. A handler only fires when the repo task above
+  # reports `changed`, so a run that adds the repo and then dies before the
+  # handler executes leaves the repo present and the cache unaware of it — and
+  # every run after that reports the repo `ok`, notifies nothing, and fails to
+  # find the package. That is exactly how this broke: an unrelated role's
+  # handler failed during the same flush, and the refresh never ran.
+  #
+  # `flush_handlers` made it worse, not better: it flushes EVERY pending
+  # handler, so this role's correctness depended on every other role's handlers
+  # succeeding first. Sequencing something your own next task needs is not what
+  # handlers are for.
+  ansible.builtin.apt:
+    update_cache: true
+  changed_when: false

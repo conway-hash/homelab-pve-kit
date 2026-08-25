@@ -54,13 +54,22 @@
     architectures: "{{ 'amd64' if ansible_facts['architecture'] == 'x86_64' else 'arm64' }}"
     signed_by: /etc/apt/keyrings/docker.asc
     enabled: true
-  notify: Refresh apt cache after Docker repo change
 
-- name: Refresh apt cache now if the repository changed
-  # The handler would otherwise fire at the end of the play, long after the
-  # install below has already failed against a cache that has never heard of
-  # docker-ce. Same reason the tailscale role does this.
-  ansible.builtin.meta: flush_handlers
+- name: Refresh apt cache for the Docker repository
+  # A plain task, not a handler. A handler only fires when the repo task above
+  # reports `changed`, so a run that adds the repo and then dies before the
+  # handler executes leaves the repo present and the cache unaware of it — and
+  # every run after that reports the repo `ok`, notifies nothing, and fails to
+  # find the package. That is exactly how this broke: an unrelated role's
+  # handler failed during the same flush, and the refresh never ran.
+  #
+  # `flush_handlers` made it worse, not better: it flushes EVERY pending
+  # handler, so this role's correctness depended on every other role's handlers
+  # succeeding first. Sequencing something your own next task needs is not what
+  # handlers are for.
+  ansible.builtin.apt:
+    update_cache: true
+  changed_when: false
 
 - name: Install Docker Engine and the Compose plugin
   ansible.builtin.apt:

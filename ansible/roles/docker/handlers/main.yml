@@ -1,7 +1,0 @@
----
-# Named distinctly from the tailscale and pve_repos handlers: handler names are
-# play-global, so three roles all calling theirs "Refresh apt cache" would
-# collide and only one would ever run.
-- name: Refresh apt cache after Docker repo change
-  ansible.builtin.apt:
-    update_cache: true
