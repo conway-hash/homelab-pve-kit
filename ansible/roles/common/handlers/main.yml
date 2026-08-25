@@ -14,7 +14,26 @@
   # unit is the real check.
   failed_when: false
 
-- name: Restart watchdog
+# Debian ships watchdog.service and wd_keepalive.service with Conflicts= on
+# each other: wd_keepalive exists to keep petting /dev/watchdog while watchdog
+# itself is being restarted. A plain `state: restarted` queues both, systemd
+# resolves the conflict by cancelling one of them, and the result is
+# "Job for watchdog.service canceled." — which reads like a service failure
+# rather than a scheduling conflict.
+#
+# Stopping the keepalive first makes the transaction unambiguous. The hardware
+# timeout is guest_watchdog_timeout seconds and the gap here is under a second,
+# so nothing gets close to tripping a reset.
+- name: Stop wd_keepalive so the watchdog restart is not cancelled
+  listen: Restart watchdog
+  ansible.builtin.systemd_service:
+    name: wd_keepalive
+    state: stopped
+  # Absent on some installs, and not an error when it is.
+  failed_when: false
+
+- name: Restart the watchdog daemon
+  listen: Restart watchdog
   ansible.builtin.systemd_service:
     name: watchdog
     state: restarted
