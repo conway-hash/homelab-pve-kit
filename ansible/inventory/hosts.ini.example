@@ -18,13 +18,29 @@ pve ansible_host=pve.ts.conway-hash.com ansible_user=ci-deploy
 ansible_ssh_private_key_file=~/.ssh/homelab_ci_deploy
 ansible_ssh_common_args=-o StrictHostKeyChecking=accept-new
 
-# Guests go here as they are built. Each one needs to be on the tailnet
-# first — that is how Ansible reaches it at all, since these machines have
-# no public address.
+# Group `vault_host`, machine `vault` — the same split as pve_host/pve, and for
+# the same reason: a group and a host sharing one name makes `--limit vault`
+# ambiguous, and Ansible only warns about it. The MACHINE name is what matters
+# downstream — the tailscale role defaults tailscale_hostname to it, so this is
+# what makes the guest vault.ts.conway-hash.com.
+[vault_host]
+# Reached by ProxyJump through the hypervisor, not by tailnet name, and
+# deliberately so. The tailnet name would work once the tailscale role has run,
+# but it would ALSO be the only way in — so a guest whose tailnet join broke
+# would be unreachable by the very playbook that could fix it. The hypervisor
+# is on the tailnet and on the LAN, which makes it a door that stays open.
 #
-# VM 100 (Obsidian sync + DB) is deliberately NOT here. It predates this
-# repo, it stays LAN-only, and it is not managed by Ansible. Leave it
-# alone; it is not a gap waiting to be filled.
+# The address is static and set in group_vars/pve_host/vars.yml, not leased,
+# because Ansible has to know it before the machine has ever booted.
+vault ansible_host=1.1.1.21 ansible_user=ci-deploy
+
+[vault_host:vars]
+ansible_ssh_private_key_file=~/.ssh/homelab_ci_deploy
+ansible_ssh_common_args=-o StrictHostKeyChecking=accept-new -o ProxyCommand="ssh -W %h:%p -q -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new ci-deploy@pve.ts.conway-hash.com"
+
+# The Obsidian sync server (VM 100) is NOT managed here and is NOT on the
+# tailnet — nothing outside the LAN can reach it. It predates this repo and
+# stays out of scope.
 #
-# [<service>]
-# <service> ansible_host=<service>.ts.conway-hash.com ansible_user=ci-deploy
+# [obsidian]
+# obsidian ansible_host=obsidian.ts.conway-hash.com ansible_user=ci-deploy

@@ -56,7 +56,10 @@ pve_repositories:
 # The screen is wired to this box, so the compositor and browser have to
 # run here — a guest can't drive it without GPU passthrough, which would
 # take the console away and buy nothing. The *data* is all local anyway.
-kiosk_enabled: true
+#
+# Whether it runs at all is service_enabled.kiosk, in
+# group_vars/all/services.yml with every other service's switch. These are its
+# settings, which are only consulted once it is on.
 
 # Localhost only. Nothing about this is meant to be reachable off-box, so
 # the port never leaves 127.0.0.1 and no firewall rule is needed.
@@ -71,3 +74,127 @@ kiosk_refresh_seconds: 10
 # The Proxmox node name pvesh is queried for — not necessarily the same
 # string as the tailnet hostname, though here they both happen to be "pve".
 pve_node: pve
+
+# ── Backups ──────────────────────────────────────────────────────────
+#
+# The jobs themselves are derived from pve_guests below — each guest carries
+# its own `backup:` policy, so a vmid is written exactly once in this repo.
+# A guest with no `backup:` key gets no job.
+#
+# ⚠️ Confirmed on the host: /var/lib/vz/dump exists, so `local` takes backups.
+# It is the same physical disk (sdb) as the guests themselves, so this protects
+# against mistakes, not against that disk dying. There is an untouched 931G sda
+# in this box if you ever want somewhere better.
+pve_backup_storage: local
+
+# Snapshot, not stop: the guest keeps running. Vaultwarden's SQLite database is
+# in WAL mode and comes through consistently, and a nightly stop would be a
+# scheduled outage of the one service you need at unpredictable times.
+pve_backup_mode: snapshot
+
+# ── Guests ───────────────────────────────────────────────────────────
+#
+# Created by the pve_guests role, which clones each one from a cloud-init
+# template it builds once. Whether a guest exists at all is its `service` flag
+# in group_vars/all/services.yml — switch that off and the VM is DESTROYED on
+# the next run, disk included.
+#
+# This repo used OpenTofu for this briefly. It was dropped because the only
+# thing it actually required was somewhere to keep a state file, and every
+# option for that meant either a cloud bucket or a hand-managed service on the
+# hypervisor — in a repo whose stated point is needing neither. A VM on a
+# single node is flat parameters with no resource graph to model, and Ansible
+# asks Proxmox what exists rather than remembering, which suits a box you will
+# click around in by hand.
+
+# How to reach the API. Only the token SECRET is a secret; it lives in
+# secrets.yml with an assert in the role. These two are just names.
+pve_api_host: pve.ts.conway-hash.com
+pve_api_user: automation@pve
+pve_api_token_id: homelab
+
+# Proxmox ships a self-signed certificate, and this endpoint is only ever
+# reached over the tailnet, which is already authenticated and encrypted at the
+# WireGuard layer. Verifying a certificate nobody issued buys nothing.
+pve_api_validate_certs: false
+
+# ── The cloud-init template every guest is cloned from ───────────────
+#
+# Built once, ever. This is what makes adding the fifth service cheap: one
+# clone task, not another image download and another disk import.
+pve_template_vmid: 9000
+pve_template_name: debian-13-cloudinit
+pve_template_image_url: https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
+pve_template_image_path: /var/lib/vz/template/iso/debian-13-genericcloud-amd64.qcow2
+
+# A full clone of a 20G disk takes a while on spinning storage.
+pve_clone_timeout: 600
+
+# ── Where guests land ────────────────────────────────────────────────
+
+# Confirmed on the host: pve-data is an LVM-thin pool with ~97G free after
+# VM 100's 32G, so `local-lvm` is the datastore and a 20G guest fits.
+pve_vm_datastore: local-lvm
+
+pve_bridge: vmbr0
+
+# The home LAN, read off the host itself (vmbr0 is 1.1.1.210/24, default route
+# via 1.1.1.254). Guests get a static address rather than a lease, because
+# Ansible reaches them by ProxyJump through the hypervisor and has to know the
+# address before the machine has ever booted.
+#
+# ⚠️ This LAN uses 1.1.1.0/24, which overlaps Cloudflare's public 1.1.1.1
+# resolver. Nothing here depends on reaching that address — guests resolve
+# through Tailscale MagicDNS once joined, and the gateway before that — but if
+# DNS ever behaves strangely on a guest, this overlap is the first suspect.
+pve_lan_cidr_prefix: 24
+pve_lan_gateway: 1.1.1.254
+
+# The gateway, which is what the host's own LAN clients use. Only needed for
+# the window between first boot and the tailscale role running; after that
+# MagicDNS takes over.
+pve_lan_dns_servers: 1.1.1.254
+
+# Seconds Proxmox waits after starting a guest before starting the next, and
+# how long it waits for one to shut down. Not cosmetic: a guest's clock, its
+# tailnet join and Caddy's ACME renewal all want the host's networking settled
+# first.
+pve_guest_up_delay: 30
+pve_guest_down_delay: 60
+
+# ── The guests themselves ────────────────────────────────────────────
+#
+# `service` must match a key in group_vars/all/services.yml.
+#
+# ── vmid allocation ──
+#
+# Machines this repo creates are numbered from 999 DOWNWARD: 999, 998, 997...
+# The 100-range is left alone for guests created by hand — VM 100 (Obsidian
+# sync) is there for legacy reasons and is not managed here.
+#
+# Starting from opposite ends means the two allocations cannot collide as
+# either grows, and the number itself tells you at a glance which side created
+# a VM: low means someone clicked it, high means this repo owns it and will
+# happily destroy it when its switch goes false.
+#
+# 9000 is the cloud-init template, deliberately far from both.
+pve_guests:
+  - name: vault
+    service: vault
+    vmid: 999
+    cores: 2
+    memory_mb: 2048
+    disk_gb: 20
+    # Deliberately below 1.1.1.100: consumer routers typically hand out
+    # .100-.199 or higher, so a static in that range risks a lease collision
+    # that only shows up as an intermittent, confusing outage. Confirmed free
+    # (no ARP reply) at the time this was set.
+    ipv4: 1.1.1.21
+    startup_order: 10
+    # A vault with no backup is one disk away from every password being gone,
+    # and unlike most services there is no re-deriving the contents.
+    # Systemd calendar syntax, not cron.
+    backup:
+      schedule: "03:30"
+      keep_daily: 7
+      keep_weekly: 4

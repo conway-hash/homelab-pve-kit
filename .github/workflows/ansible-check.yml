@@ -1,0 +1,142 @@
+name: Ansible Check
+
+# The `tofu plan` replacement. Runs the real playbook against the real host in
+# check mode and posts what would change as a PR comment.
+#
+# Honest about one limit: community.proxmox's modules do not support check
+# mode, so Ansible skips them here — creating and destroying VMs would be
+# invisible. That is exactly why the pve_guests role prints its own
+# CREATE/KEEP/DESTROY plan from `qm list`, which DOES run in check mode. That
+# summary is the part of this output worth reading first.
+
+on:
+  pull_request:
+    paths:
+      - "ansible/**"
+      - ".github/workflows/ansible-check.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: check-pve-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # Forks never receive secrets, so this cannot reach the host at all.
+    # Skipping beats a red X that means nothing about the change.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Ansible + collections
+        run: |
+          pipx install --include-deps ansible
+          pipx inject ansible 'proxmoxer>=2.3' requests
+          ansible-galaxy collection install -r requirements.yml
+
+      - name: Join the tailnet
+        run: |
+          if [ -z "${{ secrets.TS_AUTHKEY }}" ]; then
+            echo "::error::TS_AUTHKEY is not set — see SETUP.md step 4."
+            exit 1
+          fi
+          curl -fsSL https://tailscale.com/install.sh | sh
+          LOGIN=$(grep '^headscale_server_url:' group_vars/all/vars.yml \
+            | sed 's/^headscale_server_url:[[:space:]]*//; s/[[:space:]]*#.*$//')
+          sudo tailscale up \
+            --timeout=60s \
+            --login-server="$LOGIN" \
+            --authkey="${{ secrets.TS_AUTHKEY }}" \
+            --hostname="gh-check-${GITHUB_RUN_ID}" \
+            --accept-dns=true
+
+      - name: Write credentials
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.PVE_SSH_PRIVATE_KEY }}" > ~/.ssh/homelab_ci_deploy
+          chmod 600 ~/.ssh/homelab_ci_deploy
+          cp inventory/hosts.ini.example inventory/hosts.ini
+
+          {
+            printf 'pve_guests_api_token_secret: "%s"\n' "${{ secrets.PVE_API_TOKEN_SECRET }}"
+            printf 'pve_guests_ssh_public_key: "%s"\n' "$(ssh-keygen -y -f ~/.ssh/homelab_ci_deploy)"
+          } > group_vars/pve_host/secrets.yml
+
+          {
+            printf 'tailscale_authkey: "%s"\n' "${{ secrets.SVC_VAULTWARDEN_TS_AUTHKEY }}"
+            printf 'svc_vaultwarden_admin_token: "%s"\n' "${{ secrets.SVC_VAULTWARDEN_ADMIN_TOKEN }}"
+            printf 'svc_vaultwarden_cloudflare_api_token: "%s"\n' "${{ secrets.SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN }}"
+          } > group_vars/vault_host/secrets.yml
+
+      # The gating check. The hypervisor always exists, and this is where the
+      # guest plan is printed — so if this fails, the PR is not safe to merge.
+      - name: Check — hypervisor
+        id: hypervisor
+        run: |
+          ansible-playbook site.yml --limit pve_host --check --diff 2>&1 | tee /tmp/check-pve.txt
+
+      # Guests are informational. A guest that does not exist yet is
+      # UNREACHABLE here, and that is the correct, expected answer on the PR
+      # that introduces it — not a failure.
+      - name: Check — guests
+        id: guests
+        continue-on-error: true
+        run: |
+          ansible-playbook site.yml --limit '!pve_host' --check --diff 2>&1 \
+            | tee /tmp/check-guests.txt
+
+      - name: Post the plan as a PR comment
+        if: always()
+        uses: actions/github-script@v8
+        env:
+          # Through the environment, not interpolated into the script: this is
+          # arbitrary output, and a backtick or ${ in it would be parsed as JS.
+          PVE: ${{ steps.hypervisor.outcome }}
+          GUESTS: ${{ steps.guests.outcome }}
+        with:
+          script: |
+            const fs = require('fs');
+            const read = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return '(did not run)'; } };
+            const tail = (s, n) => s.length > n ? '…truncated…\n' + s.slice(-n) : s;
+
+            const body = [
+              '## Ansible check',
+              '',
+              'Read the **pve_guests → Show what will change** task first — it is the',
+              'only preview of VM creation and destruction, because the Proxmox',
+              'modules do not support check mode.',
+              '',
+              `### Hypervisor — \`${process.env.PVE}\``,
+              '```',
+              tail(read('/tmp/check-pve.txt'), 25000),
+              '```',
+              '',
+              `### Guests — \`${process.env.GUESTS}\``,
+              '',
+              'UNREACHABLE here is expected for a guest that does not exist yet.',
+              '',
+              '```',
+              tail(read('/tmp/check-guests.txt'), 25000),
+              '```',
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body.slice(0, 65000),
+            });
+
+      - name: Leave the tailnet
+        if: always()
+        run: |
+          sudo tailscale logout \
+            || echo "::warning::tailscale logout failed; headscale will reap this node after its inactivity timeout"

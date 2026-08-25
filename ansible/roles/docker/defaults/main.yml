@@ -1,0 +1,11 @@
+---
+# Intentionally empty.
+#
+# This file holds ONLY vars with no safe default — secrets and
+# required-but-unset values, each declared as "" with an assert in
+# tasks/main.yml. Docker needs neither: it installs from an upstream apt repo
+# with no credential.
+#
+# The pinned Compose/Engine channel and everything else with a real default
+# lives in group_vars/all/vars.yml, because it is true of every guest that runs
+# containers rather than of any one of them.

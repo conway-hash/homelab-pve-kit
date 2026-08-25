@@ -1,0 +1,257 @@
+---
+# Creates and removes the guests this repo owns.
+#
+# Two kinds of task in here, on purpose:
+#
+#   * `qm` commands, run ON the hypervisor. Building the cloud-init template
+#     needs a disk import, which is a local storage operation with no clean
+#     API equivalent.
+#   * proxmox_kvm, delegated to the CONTROLLER. The module needs proxmoxer
+#     >= 2.3 and Debian trixie ships 2.2.0, so running it on the hypervisor
+#     would mean pip-installing over an externally-managed Python on a
+#     machine that is meant to stay minimal. The controller is disposable and
+#     already on the tailnet, so it talks to the API from there instead.
+
+- name: Refuse to manage guests without the Proxmox API token
+  ansible.builtin.assert:
+    that: pve_guests_api_token_secret | length > 0
+    fail_msg: >-
+      pve_guests_api_token_secret is unset, so nothing can create or remove a guest.
+      Mint one with `pveum user token add {{ pve_api_user }} {{ pve_api_token_id }} --privsep 0`
+      and put it in group_vars/pve_host/secrets.yml — see docs/README.md.
+
+- name: Refuse to build guests nobody could log into
+  ansible.builtin.assert:
+    that: pve_guests_ssh_public_key | length > 0
+    fail_msg: >-
+      pve_guests_ssh_public_key is unset. cloud-init would build a guest with
+      no authorised key on it, which Ansible then cannot reach to fix — the
+      only way back is the Proxmox console. Set it to the output of
+      `ssh-keygen -y -f ~/.ssh/homelab_ci_deploy`.
+
+- name: Split the guest list by its service switch
+  # Computed once. The same expression inline on six loops would be six places
+  # for one fact to disagree with itself, which is the duplication this repo
+  # has already paid down once elsewhere.
+  ansible.builtin.set_fact:
+    pve_guests_on: "{{ pve_guests | selectattr('service', 'in', _on) | list }}"
+    pve_guests_off: "{{ pve_guests | rejectattr('service', 'in', _on) | list }}"
+  vars:
+    _on: "{{ service_enabled | dict2items | selectattr('value') | map(attribute='key') | list }}"
+
+# ── What is about to happen ──────────────────────────────────────────
+#
+# community.proxmox.proxmox_kvm does NOT support check mode, so under
+# `--check` Ansible skips every task below that creates or destroys a VM —
+# the exact operations you most want previewed. A run would look clean and
+# tell you nothing.
+#
+# So this is a hand-rolled plan for the only irreversible thing this role
+# does. It runs in check mode AND in a real run, before anything is touched.
+
+- name: Read the VMs that currently exist
+  ansible.builtin.command: qm list
+  register: pve_guests_existing
+  changed_when: false
+  # Read-only, so it is safe — and necessary — under --check too. Without
+  # this the plan below would have nothing to compare against and would
+  # report every guest as new.
+  check_mode: false
+
+- name: Show what will change
+  ansible.builtin.debug:
+    msg: "{{ _plan }}"
+  vars:
+    _have: "{{ pve_guests_existing.stdout_lines[1:] | map('trim') | map('regex_replace', '^([0-9]+).*$', '\\1') | list }}"
+    _create: "{{ pve_guests_on | rejectattr('vmid', 'in', _have | map('int') | list) | list }}"
+    _keep: "{{ pve_guests_on | selectattr('vmid', 'in', _have | map('int') | list) | list }}"
+    _destroy: "{{ pve_guests_off | selectattr('vmid', 'in', _have | map('int') | list) | list }}"
+    _plan: >-
+      {{
+        ['CREATE:  ' + (_create | map(attribute='name') | join(', ') | default('none', true))]
+        + ['KEEP:    ' + (_keep | map(attribute='name') | join(', ') | default('none', true))]
+        + ['DESTROY: ' + (_destroy | map(attribute='name') | join(', ') | default('none', true))
+           + (' ⚠️  THIS DELETES THE DISK' if _destroy | length > 0 else '')]
+      }}
+
+# ── The cloud-init template ──────────────────────────────────────────
+#
+# Built once, ever, and cloned by every guest after it. That is the part that
+# makes adding the fifth service cheap: it is one clone task, not another image
+# download and another disk import.
+
+- name: Check whether the cloud-init template already exists
+  ansible.builtin.command: qm config {{ pve_template_vmid }}
+  register: pve_guests_template
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Build the cloud-init template
+  when: pve_guests_template.rc != 0
+  block:
+    - name: Download the Debian cloud image
+      ansible.builtin.get_url:
+        url: "{{ pve_template_image_url }}"
+        dest: "{{ pve_template_image_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Create the template VM and import the cloud image
+      # --import-from does the disk import inline, so nothing has to parse
+      # `qm disk import` output to learn what the volume ended up being called.
+      # PVE 8+ only, which this repo already requires.
+      ansible.builtin.command:
+        argv:
+          - qm
+          - create
+          - "{{ pve_template_vmid }}"
+          - --name={{ pve_template_name }}
+          - --ostype=l26
+          - --machine=q35
+          - --cpu=host
+          - --net0=virtio,bridge={{ pve_bridge }}
+          - --scsihw=virtio-scsi-single
+          - --scsi0={{ pve_vm_datastore }}:0,import-from={{ pve_template_image_path }},discard=on,ssd=1
+          - --ide2={{ pve_vm_datastore }}:cloudinit
+          - --boot=order=scsi0
+          # A serial console, so `qm terminal` works when the guest will not
+          # come up and there is nothing else to look at.
+          - --serial0=socket
+          - --vga=serial0
+          - --agent=enabled=1
+      changed_when: true
+
+    - name: Convert it to a template
+      ansible.builtin.command: qm template {{ pve_template_vmid }}
+      changed_when: true
+
+# ── The guests ───────────────────────────────────────────────────────
+
+- name: Clone the enabled guests from the template
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ pve_api_host }}"
+    api_user: "{{ pve_api_user }}"
+    api_token_id: "{{ pve_api_token_id }}"
+    api_token_secret: "{{ pve_guests_api_token_secret }}"
+    validate_certs: "{{ pve_api_validate_certs }}"
+    node: "{{ pve_node }}"
+    clone: "{{ pve_template_name }}"
+    vmid: "{{ item.vmid }}"
+    name: "{{ item.name }}"
+    # A full clone, not linked: a linked clone keeps a permanent dependency on
+    # the template, so the template can never be rebuilt or removed without
+    # taking every guest with it.
+    full: true
+    storage: "{{ pve_vm_datastore }}"
+    timeout: "{{ pve_clone_timeout }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
+  loop: "{{ pve_guests_on }}"
+  loop_control:
+    label: "{{ item.name }} (vmid {{ item.vmid }})"
+
+- name: Configure the enabled guests
+  # A separate call from the clone: the module cannot clone and update in one
+  # pass, and this is also what makes a change to cores/memory/watchdog apply
+  # to a guest that already exists rather than only at creation.
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ pve_api_host }}"
+    api_user: "{{ pve_api_user }}"
+    api_token_id: "{{ pve_api_token_id }}"
+    api_token_secret: "{{ pve_guests_api_token_secret }}"
+    validate_certs: "{{ pve_api_validate_certs }}"
+    node: "{{ pve_node }}"
+    vmid: "{{ item.vmid }}"
+    update: true
+
+    cores: "{{ item.cores }}"
+    memory: "{{ item.memory_mb }}"
+    agent: "enabled=1"
+
+    # Layer 1 of coming back on its own: the host was powered off and on.
+    # Proxmox does not start guests after a host boot unless told to.
+    onboot: true
+    startup: "order={{ item.startup_order }},up={{ pve_guest_up_delay }},down={{ pve_guest_down_delay }}"
+
+    # Layer 5: the guest kernel panicked or hung. A hung VM still reads as
+    # "running" to Proxmox, so nothing else intervenes. The watchdog daemon
+    # inside the guest (the `common` role) pets this device; when it stops,
+    # QEMU resets the machine.
+    #
+    # This is the honest substitute for HA, which would need a cluster with
+    # quorum — corosync on a single node is more failure surface than it removes.
+    watchdog: "model=i6300esb,action=reset"
+
+    ciuser: ci-deploy
+    sshkeys: "{{ pve_guests_ssh_public_key }}"
+    ipconfig:
+      ipconfig0: "ip={{ item.ipv4 }}/{{ pve_lan_cidr_prefix }},gw={{ pve_lan_gateway }}"
+    nameservers: "{{ pve_lan_dns_servers }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
+  loop: "{{ pve_guests_on }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Resize the enabled guests' disks
+  # The template's disk is whatever the cloud image shipped (2GB or so). Growing
+  # it is a separate operation from cloning, and it only ever grows — Proxmox
+  # refuses to shrink, which is the correct refusal.
+  ansible.builtin.command: >-
+    qm resize {{ item.vmid }} scsi0 {{ item.disk_gb }}G
+  register: pve_guests_resize
+  changed_when: "'no need to shrink' not in (pve_guests_resize.stderr | default(''))"
+  failed_when:
+    - pve_guests_resize.rc != 0
+    - "'shrink' not in (pve_guests_resize.stderr | default(''))"
+  loop: "{{ pve_guests_on }}"
+  loop_control:
+    label: "{{ item.name }} → {{ item.disk_gb }}G"
+
+- name: Start the enabled guests
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ pve_api_host }}"
+    api_user: "{{ pve_api_user }}"
+    api_token_id: "{{ pve_api_token_id }}"
+    api_token_secret: "{{ pve_guests_api_token_secret }}"
+    validate_certs: "{{ pve_api_validate_certs }}"
+    node: "{{ pve_node }}"
+    vmid: "{{ item.vmid }}"
+    state: started
+  delegate_to: localhost
+  become: false
+  no_log: true
+  loop: "{{ pve_guests_on }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# ── Removal ──────────────────────────────────────────────────────────
+
+- name: Remove guests whose service has been switched off
+  # ⚠️ This DESTROYS the VM and its disk. It is the deliberate counterpart to
+  # the switch in services.yml: a service set to false does not linger as a
+  # stopped VM quietly holding a vmid and an address.
+  #
+  # `--check --diff` shows this before it happens, and unlike everything else
+  # in this repo it is not recoverable by re-running — the guest's data lives
+  # in the vzdump backups or nowhere.
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ pve_api_host }}"
+    api_user: "{{ pve_api_user }}"
+    api_token_id: "{{ pve_api_token_id }}"
+    api_token_secret: "{{ pve_guests_api_token_secret }}"
+    validate_certs: "{{ pve_api_validate_certs }}"
+    node: "{{ pve_node }}"
+    vmid: "{{ item.vmid }}"
+    state: absent
+    force: true
+  delegate_to: localhost
+  become: false
+  no_log: true
+  loop: "{{ pve_guests_off }}"
+  loop_control:
+    label: "{{ item.name }} (vmid {{ item.vmid }})"

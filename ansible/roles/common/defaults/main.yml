@@ -1,0 +1,11 @@
+---
+# Intentionally empty of secrets — this role needs none.
+#
+# This file holds ONLY vars with no safe default: secrets and
+# required-but-unset values, each declared as "" with an
+# ansible.builtin.assert in tasks/main.yml. It never restates a value that
+# already lives in group_vars/, which would be the same fact declared twice.
+#
+# The baseline every guest gets. Real defaults for it live in
+# group_vars/all/vars.yml, because they are true of every guest this repo
+# creates rather than of any one of them.

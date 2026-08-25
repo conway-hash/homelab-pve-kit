@@ -1,0 +1,15 @@
+# Managed by Ansible (svc_vaultwarden) — edits will be overwritten.
+#
+# The official caddy image ships no DNS provider modules, so it cannot answer
+# an ACME DNS-01 challenge on its own. Ready-made images that bundle the
+# Cloudflare plugin exist, but putting a stranger's build in front of a
+# password vault to save one build step is not a trade worth making. This is
+# the official image plus the official plugin, compiled here.
+
+ARG CADDY_VERSION
+
+FROM caddy:${CADDY_VERSION}-builder AS builder
+RUN xcaddy build --with github.com/caddy-dns/cloudflare
+
+FROM caddy:${CADDY_VERSION}
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy

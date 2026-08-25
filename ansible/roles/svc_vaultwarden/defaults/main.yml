@@ -1,0 +1,35 @@
+---
+# This file holds ONLY vars with no safe default — secrets and
+# required-but-unset values, declared as "" with an ansible.builtin.assert in
+# tasks/main.yml that refuses to deploy without them. Everything with a real
+# default (versions, paths, the domain) lives in group_vars/vault_host/vars.yml,
+# not here; the same key in both files is the duplication bug this repo has
+# already paid down once.
+#
+# Set for real in group_vars/vault_host/secrets.yml (git-ignored) or written by CI
+# from GitHub Secrets immediately before the playbook runs. See SETUP.md.
+
+# Argon2 PHC hash of the admin password, NOT the password itself. Gates
+# /admin, which can read and rewrite every setting on the instance.
+#
+# Generate it with:
+#
+#   docker run --rm -it vaultwarden/server /vaultwarden hash
+#
+# It contains literal '$' characters. That is why the role writes it to an
+# env_file rather than into compose.yml's `environment:` — Compose interpolates
+# '$' there and would silently mangle the hash into something that never
+# matches, giving you an admin page that rejects the correct password.
+svc_vaultwarden_admin_token: ""
+
+# Cloudflare API token used for the ACME DNS-01 challenge, so Let's Encrypt can
+# prove control of the domain without anything being publicly reachable. That
+# is the whole reason DNS-01 is used here instead of HTTP-01: this machine has
+# no port open to the internet and is not going to get one.
+#
+# Mint it from Cloudflare's "Edit zone DNS" template, restricted to the single
+# zone. That is Zone:Read + DNS:Edit, and both halves are load-bearing: the
+# plugin walks up from _acme-challenge.<host> to find the owning zone, which
+# DNS:Edit alone cannot do. It is still a DNS-write credential for that whole
+# zone — the narrowest thing that can answer a challenge, not a harmless one.
+svc_vaultwarden_cloudflare_api_token: ""

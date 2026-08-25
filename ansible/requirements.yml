@@ -2,9 +2,14 @@
 # Real Ansible Galaxy collections only. Shared logic in this repo lives as
 # ordinary local roles under ansible/roles/, referenced by bare name — no
 # git-collection sources, no private namespace, no composite actions.
-#
-# Empty on purpose: the pve_host role uses nothing but ansible.builtin.
-# A dependency listed "because we'll probably need it" is the same clutter
-# as a role nothing references. community.docker lands here the day a role
-# actually imports it.
-collections: []
+collections:
+  # Creates the guests. This repo used OpenTofu for that briefly and dropped
+  # it: a VM on a single node is ~15 flat parameters with no resource graph to
+  # model, and the only thing OpenTofu actually required was somewhere to keep
+  # a state file — which meant either a cloud bucket or a hand-managed service
+  # on the hypervisor, in a repo whose whole selling point is needing neither.
+  #
+  # Ansible asks Proxmox what exists instead of remembering, which also suits a
+  # box you will click around in by hand.
+  - name: community.proxmox
+    version: ">=2.0.0"

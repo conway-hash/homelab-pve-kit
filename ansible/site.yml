@@ -2,6 +2,10 @@
 # One play per host group. Adding a service later means adding a play here
 # and a roles/svc_<name>/ role — never a new workflow file, because CI
 # matrixes over the groups in this file.
+#
+# Every service is optional. The switches all live in
+# group_vars/all/services.yml; nothing in this file holds a second copy of
+# one. A service that is off is gated before anything is installed, not after.
 
 - name: Converge the Proxmox hypervisor
   hosts: pve_host
@@ -15,20 +19,69 @@
   #   tailscale  needs working apt to install; everything after this is
   #              reachable by tailnet name
   #   pve_host   sudo, unattended upgrades, notifications
+  #   pve_guests creates the guests the plays below then converge
+  #
+  # The first three are the hypervisor itself and have no switch — you cannot
+  # turn off the machine the rest of this repo runs on. Only pve_kiosk is a
+  # service, and only it is gated.
   roles:
     - pve_repos
     - tailscale
     - pve_host
-    - pve_kiosk
 
-# Guests live below this line. The pattern, when the first one lands:
+    # Creates and removes the guests, before the plays that converge them.
+    # Ansible cannot configure a machine that does not exist yet, and on the
+    # first run of a new service that is exactly the situation.
+    - pve_guests
+
+    - role: pve_kiosk
+      when: service_enabled.kiosk | bool
+
+# ── Guests ───────────────────────────────────────────────────────────
 #
-# - name: Converge <service>
-#   hosts: <service>
-#   become: true
-#   roles:
-#     - tailscale       # same role, no Proxmox assumptions in it
-#     - svc_<service>   # the service itself, self-contained
-#
-# VM 100 (Obsidian sync) is not one of them and is not planned to be —
-# see inventory/hosts.ini.example.
+# Group `vault_host`, machine `vault` — same split as pve_host/pve, so that
+# `--limit vault` is never ambiguous. See inventory/hosts.ini.example.
+
+- name: Converge the vault
+  hosts: vault_host
+  become: true
+
+  # Deferred on purpose. Fact gathering is the play's first connection, so
+  # leaving it on would have Ansible SSH into a guest that may not exist —
+  # a service switched off has no VM, because pve_guests destroyed it.
+  # The end_play below runs before anything reaches for the network.
+  gather_facts: false
+
+  pre_tasks:
+    - name: Stop here if the vault is switched off
+      ansible.builtin.meta: end_play
+      when: not (service_enabled.vault | bool)
+
+    - name: Gather facts
+      # What gather_facts: true would have done, now that we know there is
+      # something on the other end to gather them from.
+      ansible.builtin.setup:
+
+  # Same ordering logic as the hypervisor play, for the same reason:
+  #
+  #   common     qemu-guest-agent and the hardware watchdog. First, because
+  #              everything after it is easier to recover from if the machine
+  #              can be reset when it wedges.
+  #   tailscale  the same role the hypervisor uses, unmodified — nothing in it
+  #              is Proxmox-specific. Ansible reaches this guest by ProxyJump
+  #              through the hypervisor either way, so a broken join leaves it
+  #              fixable rather than unreachable.
+  #   docker     engine + compose plugin, from Docker's own repo
+  #   svc_vaultwarden
+  #
+  # No per-role `when:` here — the whole play is already gated above, and
+  # repeating the condition on each role would be the same fact tested five
+  # times with five chances to disagree.
+  roles:
+    - common
+    - tailscale
+    - docker
+    - svc_vaultwarden
+
+# VM 100 (Obsidian sync) is not managed here and is not planned to be — see
+# inventory/hosts.ini.example.

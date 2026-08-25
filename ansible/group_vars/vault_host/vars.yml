@@ -1,0 +1,70 @@
+---
+# The vault guest — Vaultwarden behind its own Caddy.
+#
+# A VM, not an LXC container: Tailscale and Docker both need special-casing
+# inside an unprivileged container, and the usual workaround — running it
+# privileged — removes the isolation boundary from the one machine on this
+# host that most needs it. Created by the pve_guests role.
+
+# Derived from the golden-base fact rather than written out, so the vault's
+# name cannot drift from the tailnet the rest of the repo joins.
+#
+# This is the MagicDNS name Headscale already resolves to this node's tailnet
+# address — no DNS record to create by hand — and it is simultaneously a real
+# subdomain of a zone in Cloudflare, so a public CA can validate it over DNS-01
+# even though only tailnet members can resolve or reach it. That is what makes
+# a per-service Caddy cheap here: no public record, no exposed port, no shared
+# wildcard certificate on some third box.
+vaultwarden_domain: "vault.{{ tailnet_base_domain }}"
+
+vaultwarden_dir: /opt/vaultwarden
+
+# <-- change this
+#
+# Where Let's Encrypt sends expiry warnings. A renewal that has been quietly
+# failing for weeks is the most likely way this service goes down, and this
+# address is the only notice you get before it does.
+vaultwarden_acme_email: tomasbokor.dev@gmail.com
+
+# renovate: datasource=docker depName=vaultwarden/server
+vaultwarden_version: "1.37.2"
+
+# Used for both stages of the Caddy build — `caddy:<v>-builder` compiles the
+# Cloudflare DNS plugin in, `caddy:<v>` runs it. One var, so the two stages
+# cannot end up a version apart.
+#
+# The `renovate:` line has to sit IMMEDIATELY above the var, with no comment
+# between. Renovate's pattern matches the two as adjacent lines, and anything
+# in the gap makes it stop tracking silently — no error, just a dependency
+# that quietly never updates again.
+# renovate: datasource=docker depName=caddy
+caddy_version: "2.11.4"
+
+# Registration is closed (SIGNUPS_ALLOWED=false, set in the role's env template
+# and not a var — it is not a knob anyone should reach for on a personal
+# vault). Invitations from the admin page still work, which is how a second
+# device or a family member gets an account.
+vaultwarden_invitations_allowed: true
+
+# `warn`, not `info`: at info Vaultwarden logs every sync from every client,
+# which on a phone that polls is a lot of noise hiding the one line that
+# matters.
+vaultwarden_log_level: warn
+
+# ── Self-heal ────────────────────────────────────────────────────────
+#
+# Docker restarts a container whose process exits; it does not read healthcheck
+# results, so a container that is up but not answering is restarted by nothing.
+# A systemd timer asks the question a client asks and restarts the stack when
+# the answer stops coming.
+
+# How often to check.
+vaultwarden_selfheal_interval: 2min
+
+# Consecutive misses before restarting. Not 1 — a single miss during a reload
+# or a moment of load would make this the outage it exists to prevent.
+vaultwarden_selfheal_failures: 3
+
+# tailscale_hostname isn't declared here — the tailscale role defaults it to
+# inventory_hostname, which is already "vault". Setting it again would be the
+# same value written twice, free to drift, for no gain.

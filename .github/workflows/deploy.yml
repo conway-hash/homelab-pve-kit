@@ -21,9 +21,10 @@ jobs:
   lint:
     uses: ./.github/workflows/ansible-lint.yml
 
-  # The matrix is derived from site.yml's own `hosts:` lines rather than
-  # hardcoded here. Adding a service means adding a play in site.yml and a
-  # roles/svc_<name>/ role — this workflow file is never touched again.
+  # The matrix is derived from site.yml's own `hosts:` lines crossed with the
+  # service switches, rather than hardcoded here. Adding a service means adding
+  # a play in site.yml, a roles/svc_<name>/ role and a line in services.yml —
+  # this workflow file is never touched again.
   groups:
     runs-on: ubuntu-latest
     outputs:
@@ -31,17 +32,52 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - run: pip install --quiet pyyaml
+
       - id: detect
         run: |
-          MATRIX=$(grep -E '^[[:space:]]+hosts:' ansible/site.yml \
-            | sed 's/.*hosts:[[:space:]]*//' \
-            | jq -R . | jq -sc .)
-          if [ "$MATRIX" = "[]" ]; then
-            echo "::error::No host groups found in ansible/site.yml"
-            exit 1
-          fi
-          echo "Deploying to: $MATRIX"
-          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, pathlib, re, sys
+          import yaml
+
+          site = pathlib.Path("ansible/site.yml").read_text()
+          groups = re.findall(r"^\s+hosts:\s*(\S+)\s*$", site, re.M)
+          if not groups:
+              sys.exit("::error::No host groups found in ansible/site.yml")
+
+          flags = yaml.safe_load(
+              pathlib.Path("ansible/group_vars/all/services.yml").read_text()
+          )["service_enabled"]
+
+          selected, skipped = [], []
+          for group in groups:
+              # The hypervisor is not a service — there is no switch for the
+              # machine everything else runs on, and pretending there is one
+              # would just be a switch that must always be true.
+              if group == "pve_host":
+                  selected.append(group)
+                  continue
+
+              # Convention, and the reason the matrix needs no mapping table:
+              # a guest group is <service>_host.
+              name = group[: -len("_host")] if group.endswith("_host") else group
+              if name not in flags:
+                  # Loud, because the alternative is silent. A typo in either
+                  # file would otherwise mean a service that quietly never
+                  # deploys, or one that deploys with nothing able to turn it
+                  # off.
+                  sys.exit(
+                      f"::error::site.yml has a play for '{group}' but "
+                      f"services.yml has no '{name}' entry. Add one, or the "
+                      f"service has no switch."
+                  )
+              (selected if flags[name] else skipped).append(group)
+
+          for group in skipped:
+              print(f"::notice::skipping {group} — switched off in services.yml", file=sys.stderr)
+          print("Deploying to:", selected, file=sys.stderr)
+          print(f"matrix={json.dumps(selected, separators=(',', ':'))}")
+          PY
 
   deploy:
     needs: [lint, groups]
@@ -59,7 +95,18 @@ jobs:
       - name: Install Ansible + collections
         run: |
           pipx install --include-deps ansible
+          # community.proxmox's modules import proxmoxer, and they run on the
+          # CONTROLLER (this runner) rather than the hypervisor — Debian trixie
+          # ships proxmoxer 2.2.0 and the modules need >= 2.3, so installing it
+          # on a machine meant to stay minimal was the wrong trade.
+          #
+          # `pipx inject`, not `pip install`: pipx puts ansible in its own venv,
+          # and a system-wide pip install would be invisible to it.
+          pipx inject ansible 'proxmoxer>=2.3' requests
           ansible-galaxy collection install -r requirements.yml
+          # For the smoke test, which reads the switches to know which guests
+          # are meant to be up.
+          pip install --quiet pyyaml
 
       - name: Join the tailnet
         # These hosts sit on a home LAN with no public address — the only
@@ -102,13 +149,66 @@ jobs:
         run: |
           cp inventory/hosts.ini.example inventory/hosts.ini
 
+      # Only the hypervisor play creates guests, so only that leg needs the
+      # Proxmox API token.
+      - name: Write the hypervisor secrets
+        if: matrix.host == 'pve_host'
+        run: |
+          if [ -z "${{ secrets.PVE_API_TOKEN_SECRET }}" ]; then
+            echo "::error::PVE_API_TOKEN_SECRET is not set — no guest can be created. See docs/README.md."
+            exit 1
+          fi
+
+          umask 077
+          # The guest SSH key is DERIVED from the deploy key rather than kept as
+          # a second secret. One keypair, one place it lives, no way for the two
+          # halves to drift.
+          {
+            printf 'pve_guests_api_token_secret: "%s"\n' "${{ secrets.PVE_API_TOKEN_SECRET }}"
+            printf 'pve_guests_ssh_public_key: "%s"\n' "$(ssh-keygen -y -f ~/.ssh/homelab_ci_deploy)"
+          } > group_vars/pve_host/secrets.yml
+
+      # Written straight before the playbook and scoped to just this matrix
+      # leg, so the vault's credentials never exist in a job that deploys
+      # something else. Never committed; the real file is git-ignored.
+      - name: Write the vault secrets
+        if: matrix.host == 'vault_host'
+        run: |
+          if [ -z "${{ secrets.SVC_VAULTWARDEN_ADMIN_TOKEN }}" ]; then
+            echo "::error::SVC_VAULTWARDEN_ADMIN_TOKEN is not set — see docs/vault.md."
+            exit 1
+          fi
+          if [ -z "${{ secrets.SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN }}" ]; then
+            echo "::error::SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN is not set. Caddy cannot obtain a certificate without it, and every Bitwarden client refuses a non-HTTPS server — see docs/vault.md."
+            exit 1
+          fi
+
+          umask 077
+          # SVC_VAULTWARDEN_TS_AUTHKEY is deliberately NOT required. It is only needed to
+          # put the guest on the tailnet the first time; after that the
+          # tailscale role sees an existing join and skips it, so routine
+          # deploys run with the secret absent and empty is the correct value.
+          #
+          # It is also a DIFFERENT scope from TS_AUTHKEY above: this one must be
+          # non-ephemeral, because the vault is a permanent machine and an
+          # ephemeral key would make it delete itself the moment it disconnects.
+          # printf rather than a heredoc, so re-indenting this block later
+          # cannot change what lands in the file — heredoc bodies are literal,
+          # and YAML's indent stripping is not obvious enough to bet a secrets
+          # file on.
+          {
+            printf 'tailscale_authkey: "%s"\n'       "${{ secrets.SVC_VAULTWARDEN_TS_AUTHKEY }}"
+            printf 'svc_vaultwarden_admin_token: "%s"\n' "${{ secrets.SVC_VAULTWARDEN_ADMIN_TOKEN }}"
+            printf 'svc_vaultwarden_cloudflare_api_token: "%s"\n'    "${{ secrets.SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN }}"
+          } > group_vars/vault_host/secrets.yml
+
       - name: Run playbook
         run: ansible-playbook site.yml --limit "${{ matrix.host }}"
 
       # A deploy job whose last step is ansible-playbook has only proven
       # that Ansible reported ok. Check the thing that actually has to be
       # true afterwards, and fail loudly when it isn't.
-      - name: Smoke test
+      - name: Smoke test — hypervisor
         if: matrix.host == 'pve_host'
         run: |
           FAILED=0
@@ -131,6 +231,83 @@ jobs:
             echo "OK: apt config parses"
           else
             echo "::error::apt config is malformed — every apt invocation on the host is now broken"
+            FAILED=1
+          fi
+
+          # Every switched-on guest must actually exist and be running. Without
+          # this, a play that reported ok while creating nothing would only be
+          # caught by the NEXT job failing to SSH into a machine that was never
+          # built — a confusing error a long way from its cause.
+          python3 - <<'PY' > /tmp/enabled-vmids
+          import yaml
+          flags = yaml.safe_load(open("group_vars/all/services.yml"))["service_enabled"]
+          guests = yaml.safe_load(open("group_vars/pve_host/vars.yml"))["pve_guests"]
+          print(" ".join(str(g["vmid"]) for g in guests if flags.get(g["service"])))
+          PY
+
+          for VMID in $(cat /tmp/enabled-vmids); do
+            STATUS=$(ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
+              ci-deploy@pve.ts.conway-hash.com "sudo qm status $VMID 2>/dev/null" \
+              | awk '{print $2}')
+            if [ "$STATUS" = "running" ]; then
+              echo "OK: VM $VMID is running"
+            else
+              echo "::error::VM $VMID is '${STATUS:-missing}', expected 'running'"
+              FAILED=1
+            fi
+          done
+
+          exit $FAILED
+
+      - name: Smoke test — vault
+        if: matrix.host == 'vault_host'
+        run: |
+          FAILED=0
+
+          DOMAIN="vault.$(grep '^tailnet_base_domain:' group_vars/all/vars.yml \
+            | sed 's/^tailnet_base_domain:[[:space:]]*//; s/[[:space:]]*#.*$//')"
+
+          # The check a real client makes, from off-box, over the tailnet:
+          # MagicDNS resolves the name, Caddy answers with a certificate that
+          # verifies against the public trust store, and Vaultwarden is awake
+          # behind it. No -k anywhere — an unverifiable certificate is one of
+          # the two outages this is here to catch, so it has to fail.
+          if curl -fsS --max-time 30 "https://${DOMAIN}/alive" >/dev/null; then
+            echo "OK: ${DOMAIN} answers over verified HTTPS"
+          else
+            echo "::error::${DOMAIN}/alive did not answer over verified HTTPS — the vault is unreachable by every Bitwarden client"
+            FAILED=1
+          fi
+
+          # Registration being open would let anything that reaches the tailnet
+          # create an account on the vault server. Vaultwarden advertises the
+          # setting in /api/config, so this is checkable from outside rather
+          # than trusting that the template rendered.
+          SIGNUPS=$(curl -fsS --max-time 30 "https://${DOMAIN}/api/config" \
+            | jq -r '.featureStates.signups // .environment.signupsAllowed // "unknown"' 2>/dev/null || echo "unknown")
+          if [ "$SIGNUPS" = "false" ]; then
+            echo "OK: signups are closed"
+          elif [ "$SIGNUPS" = "unknown" ]; then
+            echo "::warning::could not read the signups setting from /api/config — check it by hand"
+          else
+            echo "::error::signups are '$SIGNUPS', expected 'false' — anyone on the tailnet can register on your vault"
+            FAILED=1
+          fi
+
+          # The self-heal timer is the only thing covering "running but not
+          # answering". If it is not armed, that failure mode is uncovered and
+          # nothing else in this job would notice.
+          # Straight to the tailnet name, not through the hypervisor. The
+          # inventory jumps via pve so a guest with a broken tailnet join is
+          # still fixable; a smoke test wants the opposite — if the vault is not
+          # reachable the way a client reaches it, that is a failure, not
+          # something to route around.
+          if ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
+            ci-deploy@"${DOMAIN}" \
+            'systemctl is-active --quiet vaultwarden-healthcheck.timer'; then
+            echo "OK: self-heal timer is active"
+          else
+            echo "::error::vaultwarden-healthcheck.timer is not active — a wedged stack would never be restarted"
             FAILED=1
           fi
 

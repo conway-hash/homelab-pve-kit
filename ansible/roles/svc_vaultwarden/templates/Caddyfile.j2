@@ -1,0 +1,34 @@
+# Managed by Ansible (svc_vaultwarden) — edits will be overwritten.
+
+{
+	# Where expiry warnings go. ACME registration requires an address, and an
+	# unread one means the only warning before a silent outage goes nowhere.
+	email {{ vaultwarden_acme_email }}
+}
+
+{{ vaultwarden_domain }} {
+	tls {
+		# DNS-01, not HTTP-01. HTTP-01 needs Let's Encrypt to reach port 80 on
+		# this machine from the public internet, which would mean opening the
+		# vault to the world purely to renew a certificate. DNS-01 proves
+		# control of the name instead, so nothing here is ever exposed.
+		#
+		# The name lives under the tailnet base domain, which is a real
+		# subdomain of a zone in Cloudflare — so a public CA can validate it
+		# even though only tailnet members can resolve or reach it.
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+
+	# Vaultwarden is not published on the host at all; it is reachable only
+	# across this stack's private network, from Caddy. There is no plaintext
+	# port to accidentally connect to and no "it works over HTTP on the LAN"
+	# path to get used by mistake.
+	reverse_proxy vaultwarden:80
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
