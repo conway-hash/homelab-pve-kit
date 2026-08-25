@@ -195,8 +195,9 @@ On the host, as root:
 
 ```bash
 pveum role add Provisioner -privs \
-  "Datastore.Allocate Datastore.AllocateSpace Datastore.Audit \
-   Pool.Allocate Sys.Audit Sys.Modify \
+  "Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate \
+   Datastore.Audit Pool.Allocate Sys.Audit Sys.Modify \
+   SDN.Audit SDN.Use \
    VM.Allocate VM.Audit VM.Backup VM.Clone \
    VM.Config.CDROM VM.Config.Cloudinit VM.Config.CPU VM.Config.Disk \
    VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options \
@@ -216,9 +217,21 @@ The secret is shown **once**. Only that secret half is a secret — the user
 live in `group_vars/pve_host/vars.yml`. Set the secret as
 `PVE_API_TOKEN_SECRET`.
 
-`Sys.Modify` is in there for the guest's network device, and `VM.Config.HWType`
-covers the watchdog. Dropping either produces a 403 partway through, with a
-half-built VM.
+`VM.Config.HWType` covers the watchdog. **`SDN.Use` is the one people miss**:
+PVE 9 gates attaching a NIC to a bridge behind SDN permissions, so without it
+a clone dies at `403 Forbidden: Permission check failed
+(/sdn/zones/localnetwork/vmbr0, SDN.Use)` — after the VM has been created and
+before it has a network. Guides written for PVE 7 do not mention it.
+
+Dropping any of these produces a 403 partway through, with a half-built VM. To
+see exactly what a role is missing rather than discovering it one 403 at a
+time:
+
+```bash
+sudo pvesh get /access/roles --output-format json | jq -r \
+  '(map(select(.roleid=="PVEVMAdmin" or .roleid=="PVESDNUser"))|map(.privs|split(","))|flatten|unique) -
+   (map(select(.roleid=="Provisioner"))|map(.privs|split(","))|flatten) | .[]'
+```
 
 ⚠️ **PVE 9 removed `VM.Monitor`** — it was replaced by the `VM.GuestAgent.*`
 family. Older guides still list it, and `pveum role add` rejects the whole
