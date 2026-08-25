@@ -43,7 +43,10 @@ jobs:
           # from its shebang. `pipx inject ansible` looks right and is not:
           # these runners ship ansible-core in its own pipx venv, that copy
           # wins on PATH, and the injection lands in a venv nothing runs.
-          ANSIBLE_PY=$(head -1 "$(command -v ansible-playbook)" | sed 's|^#!||')
+          # awk takes the interpreter only: the shebang is `#!<path>/python -E`
+          # on these images, and passing the flag along as part of the path
+          # makes the next line an exit-127 "No such file or directory".
+          ANSIBLE_PY=$(head -1 "$(command -v ansible-playbook)" | sed 's|^#!||' | awk '{print $1}')
           echo "ansible runs on: $ANSIBLE_PY"
           "$ANSIBLE_PY" -m pip install --quiet 'proxmoxer>=2.3' requests
 
