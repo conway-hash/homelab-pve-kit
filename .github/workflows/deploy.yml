@@ -28,7 +28,7 @@ jobs:
   groups:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.detect.outputs.matrix }}
+      guests: ${{ steps.detect.outputs.guests }}
     steps:
       - uses: actions/checkout@v7
 
@@ -49,13 +49,12 @@ jobs:
               pathlib.Path("ansible/group_vars/all/services.yml").read_text()
           )["service_enabled"]
 
-          selected, skipped = [], []
+          guests, skipped = [], []
           for group in groups:
-              # The hypervisor is not a service — there is no switch for the
-              # machine everything else runs on, and pretending there is one
-              # would just be a switch that must always be true.
+              # The hypervisor is not a service and is not in this list — it is
+              # deployed by its own job, always, before any guest. There is no
+              # switch for the machine everything else runs on.
               if group == "pve_host":
-                  selected.append(group)
                   continue
 
               # Convention, and the reason the matrix needs no mapping table:
@@ -71,21 +70,25 @@ jobs:
                       f"services.yml has no '{name}' entry. Add one, or the "
                       f"service has no switch."
                   )
-              (selected if flags[name] else skipped).append(group)
+              (guests if flags[name] else skipped).append(group)
 
           for group in skipped:
               print(f"::notice::skipping {group} — switched off in services.yml", file=sys.stderr)
-          print("Deploying to:", selected, file=sys.stderr)
-          print(f"matrix={json.dumps(selected, separators=(',', ':'))}")
+          print("Guests to deploy:", guests, file=sys.stderr)
+          print(f"guests={json.dumps(guests, separators=(',', ':'))}")
           PY
 
-  deploy:
+  # The hypervisor first, on its own, because it is what CREATES the guests.
+  # This used to be guaranteed by a separate tofu-apply job; when that went
+  # away the guest legs started racing the job that builds them, and a guest
+  # play would fail as UNREACHABLE against a VM that did not exist yet.
+  # The hypervisor first, on its own, because it is what CREATES the guests.
+  # That ordering used to come free from a separate tofu-apply job; when that
+  # went away the guest legs started racing the job that builds them, and a
+  # guest play failed as UNREACHABLE against a VM that did not exist yet.
+  deploy-hypervisor:
     needs: [lint, groups]
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        host: ${{ fromJson(needs.groups.outputs.matrix) }}
     defaults:
       run:
         working-directory: ansible
@@ -152,7 +155,6 @@ jobs:
       # Only the hypervisor play creates guests, so only that leg needs the
       # Proxmox API token.
       - name: Write the hypervisor secrets
-        if: matrix.host == 'pve_host'
         run: |
           if [ -z "${{ secrets.PVE_API_TOKEN_SECRET }}" ]; then
             echo "::error::PVE_API_TOKEN_SECRET is not set — no guest can be created. See docs/README.md."
@@ -171,45 +173,10 @@ jobs:
       # Written straight before the playbook and scoped to just this matrix
       # leg, so the vault's credentials never exist in a job that deploys
       # something else. Never committed; the real file is git-ignored.
-      - name: Write the vault secrets
-        if: matrix.host == 'vault_host'
-        run: |
-          if [ -z "${{ secrets.SVC_VAULTWARDEN_ADMIN_TOKEN }}" ]; then
-            echo "::error::SVC_VAULTWARDEN_ADMIN_TOKEN is not set — see docs/vault.md."
-            exit 1
-          fi
-          if [ -z "${{ secrets.SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN }}" ]; then
-            echo "::error::SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN is not set. Caddy cannot obtain a certificate without it, and every Bitwarden client refuses a non-HTTPS server — see docs/vault.md."
-            exit 1
-          fi
-
-          umask 077
-          # SVC_VAULTWARDEN_TS_AUTHKEY is deliberately NOT required. It is only needed to
-          # put the guest on the tailnet the first time; after that the
-          # tailscale role sees an existing join and skips it, so routine
-          # deploys run with the secret absent and empty is the correct value.
-          #
-          # It is also a DIFFERENT scope from TS_AUTHKEY above: this one must be
-          # non-ephemeral, because the vault is a permanent machine and an
-          # ephemeral key would make it delete itself the moment it disconnects.
-          # printf rather than a heredoc, so re-indenting this block later
-          # cannot change what lands in the file — heredoc bodies are literal,
-          # and YAML's indent stripping is not obvious enough to bet a secrets
-          # file on.
-          {
-            printf 'tailscale_authkey: "%s"\n'       "${{ secrets.SVC_VAULTWARDEN_TS_AUTHKEY }}"
-            printf 'svc_vaultwarden_admin_token: "%s"\n' "${{ secrets.SVC_VAULTWARDEN_ADMIN_TOKEN }}"
-            printf 'svc_vaultwarden_cloudflare_api_token: "%s"\n'    "${{ secrets.SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN }}"
-          } > group_vars/vault_host/secrets.yml
-
       - name: Run playbook
-        run: ansible-playbook site.yml --limit "${{ matrix.host }}"
+        run: ansible-playbook site.yml --limit "pve_host"
 
-      # A deploy job whose last step is ansible-playbook has only proven
-      # that Ansible reported ok. Check the thing that actually has to be
-      # true afterwards, and fail loudly when it isn't.
       - name: Smoke test — hypervisor
-        if: matrix.host == 'pve_host'
         run: |
           FAILED=0
 
@@ -259,8 +226,127 @@ jobs:
 
           exit $FAILED
 
+      # Without this the runner just vanishes and headscale waits out
+      # ephemeral.inactivity_timeout (30m) before reaping the node — which
+      # leaves a dead entry holding a tailnet IP for half an hour after
+      # every deploy. Logging out makes headscale drop it immediately.
+      # always(), so a failed deploy doesn't leave one behind either.
+      - name: Leave the tailnet
+        if: always()
+        run: |
+          sudo tailscale logout \
+            || echo "::warning::tailscale logout failed; headscale will reap this node after its inactivity timeout"
+
+  # Guests, in parallel with each other but only once the hypervisor job has
+  # finished creating them. Switched-off services are already absent from this
+  # matrix, so a disabled guest is never even attempted.
+  deploy-guests:
+    needs: [lint, groups, deploy-hypervisor]
+    if: needs.groups.outputs.guests != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        host: ${{ fromJson(needs.groups.outputs.guests) }}
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Ansible + collections
+        run: |
+          pipx install --include-deps ansible
+          # community.proxmox's modules import proxmoxer, and they run on the
+          # CONTROLLER (this runner) rather than the hypervisor — Debian trixie
+          # ships proxmoxer 2.2.0 and the modules need >= 2.3, so installing it
+          # on a machine meant to stay minimal was the wrong trade.
+          #
+          # `pipx inject`, not `pip install`: pipx puts ansible in its own venv,
+          # and a system-wide pip install would be invisible to it.
+          pipx inject ansible 'proxmoxer>=2.3' requests
+          ansible-galaxy collection install -r requirements.yml
+          # For the smoke test, which reads the switches to know which guests
+          # are meant to be up.
+          pip install --quiet pyyaml
+
+      - name: Join the tailnet
+        # These hosts sit on a home LAN with no public address — the only
+        # way in is the tailnet itself. The key must be ephemeral and
+        # reusable: this node is a throwaway that should disappear on its
+        # own, which is a different scope from the non-ephemeral key a
+        # permanent machine joins with. Don't reuse one for the other.
+        run: |
+          # `tailscale up` with an empty authkey does not fail — it prints a
+          # login URL and BLOCKS waiting for a human, burning the whole job
+          # timeout. Fail fast and name the fix instead.
+          if [ -z "${{ secrets.TS_AUTHKEY }}" ]; then
+            echo "::error::TS_AUTHKEY is not set. Mint an ephemeral+reusable Headscale pre-auth key and add it as a repo secret — see SETUP.md step 4."
+            exit 1
+          fi
+          if [ -z "${{ secrets.PVE_SSH_PRIVATE_KEY }}" ]; then
+            echo "::error::PVE_SSH_PRIVATE_KEY is not set — see SETUP.md step 4."
+            exit 1
+          fi
+
+          curl -fsSL https://tailscale.com/install.sh | sh
+          LOGIN=$(grep '^headscale_server_url:' group_vars/all/vars.yml \
+            | sed 's/^headscale_server_url:[[:space:]]*//; s/[[:space:]]*#.*$//')
+          sudo tailscale up \
+            --timeout=60s \
+            --login-server="$LOGIN" \
+            --authkey="${{ secrets.TS_AUTHKEY }}" \
+            --hostname="gh-runner-${GITHUB_RUN_ID}" \
+            --accept-dns=true
+          tailscale status
+
+      - name: Write the deploy SSH key
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.PVE_SSH_PRIVATE_KEY }}" > ~/.ssh/homelab_ci_deploy
+          chmod 600 ~/.ssh/homelab_ci_deploy
+
+      - name: Write the inventory
+        run: |
+          cp inventory/hosts.ini.example inventory/hosts.ini
+
+      # Only the hypervisor play creates guests, so only that leg needs the
+      # Proxmox API token.
+      - name: Write the vault secrets
+        run: |
+          if [ -z "${{ secrets.SVC_VAULTWARDEN_ADMIN_TOKEN }}" ]; then
+            echo "::error::SVC_VAULTWARDEN_ADMIN_TOKEN is not set — see docs/vault.md."
+            exit 1
+          fi
+          if [ -z "${{ secrets.SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN }}" ]; then
+            echo "::error::SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN is not set. Caddy cannot obtain a certificate without it, and every Bitwarden client refuses a non-HTTPS server — see docs/vault.md."
+            exit 1
+          fi
+
+          umask 077
+          # SVC_VAULTWARDEN_TS_AUTHKEY is deliberately NOT required. It is only needed to
+          # put the guest on the tailnet the first time; after that the
+          # tailscale role sees an existing join and skips it, so routine
+          # deploys run with the secret absent and empty is the correct value.
+          #
+          # It is also a DIFFERENT scope from TS_AUTHKEY above: this one must be
+          # non-ephemeral, because the vault is a permanent machine and an
+          # ephemeral key would make it delete itself the moment it disconnects.
+          # printf rather than a heredoc, so re-indenting this block later
+          # cannot change what lands in the file — heredoc bodies are literal,
+          # and YAML's indent stripping is not obvious enough to bet a secrets
+          # file on.
+          {
+            printf 'tailscale_authkey: "%s"\n'       "${{ secrets.SVC_VAULTWARDEN_TS_AUTHKEY }}"
+            printf 'svc_vaultwarden_admin_token: "%s"\n' "${{ secrets.SVC_VAULTWARDEN_ADMIN_TOKEN }}"
+            printf 'svc_vaultwarden_cloudflare_api_token: "%s"\n'    "${{ secrets.SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN }}"
+          } > group_vars/vault_host/secrets.yml
+
+      - name: Run playbook
+        run: ansible-playbook site.yml --limit "${{ matrix.host }}"
+
       - name: Smoke test — vault
-        if: matrix.host == 'vault_host'
         run: |
           FAILED=0
 
