@@ -39,20 +39,26 @@
 	reverse_proxy vaultwarden:80 {
 		# Add blob: to img-src, and nothing else.
 		#
-		# Vaultwarden hardcodes its Content-Security-Policy, and the web vault
-		# it ships has moved on: it renders site icons from blob: URLs, which
-		# that policy does not allow. The browser blocks every icon and the
-		# vault list renders as a black page — the rows are in the DOM and
-		# right-clickable, just never painted. Nothing server-side looks wrong,
-		# and the only evidence is a CSP violation in the browser console.
+		# Vaultwarden hardcodes its Content-Security-Policy, and the web vault it
+		# ships has moved on: once icons are cached locally it renders them from
+		# blob: URLs, which that policy does not allow. The browser blocks them and
+		# the vault list loses its site icons. Visible only as a CSP violation in
+		# the console — nothing server-side looks wrong.
 		#
-		# Deliberately a targeted replacement rather than replacing the header:
-		# a blob: URL is an object the page itself created, same-origin, so
-		# this permits what the app already fetched and loosens nothing else.
-		# Every other directive — default-src 'none', script-src, connect-src —
-		# stays exactly as Vaultwarden set it.
+		# This is cosmetic. It was first committed while chasing a vault list that
+		# rendered as a black page, and it was NOT the cause of that — Dark Reader
+		# was, repainting an already-dark UI into black-on-black. The CSP block is
+		# real and worth fixing on its own, but do not remember it as the fix for
+		# anything larger.
 		#
-		# Remove this once Vaultwarden's own CSP includes blob: in img-src.
+		# Deliberately a targeted replacement rather than replacing the header: a
+		# blob: URL is an object the page itself created, same-origin, so this
+		# permits what the app already fetched and loosens nothing else. Every
+		# other directive — default-src 'none', script-src, connect-src — stays
+		# exactly as Vaultwarden set it. The same header already allows
+		# object-src 'self' blob:; img-src was simply missed upstream.
+		#
+		# Remove once Vaultwarden's own CSP includes blob: in img-src.
 		header_down Content-Security-Policy "img-src 'self' data:" "img-src 'self' data: blob:"
 	}
 
