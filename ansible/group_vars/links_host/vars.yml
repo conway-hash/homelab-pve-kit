@@ -45,6 +45,17 @@ linkwarden_meilisearch_version: "v1.13.3"
 # renovate: datasource=docker depName=postgres
 linkwarden_postgres_version: "16-alpine"
 
+# The uid the postgres SERVER drops to inside that image — 70 on Alpine, 999 on
+# the Debian-based tags. Every other container in this stack runs as root; this
+# one does not, and its data directory has to be owned by this uid or the server
+# refuses to start.
+#
+# ⚠️ Tied to the image tag above. If that pin ever moves off `-alpine`, this
+# has to move with it in the same change. Verify with:
+#
+#   docker run --rm postgres:16-alpine id postgres
+linkwarden_postgres_uid: 70
+
 # Used for both stages of the Caddy build — `caddy:<v>-builder` compiles the
 # Cloudflare DNS plugin in, `caddy:<v>` runs it. One var, so the two stages
 # cannot end up a version apart.

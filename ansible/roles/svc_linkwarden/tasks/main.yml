@@ -78,7 +78,9 @@
     group: root
     mode: "0750"
 
-- name: Create the data directories
+- name: Create the data directories owned by root
+  # Every container in this stack runs as root except the Postgres SERVER, so
+  # these are safe to hold at root:root 0750 on every converge.
   ansible.builtin.file:
     path: "{{ linkwarden_dir }}/{{ item }}"
     state: directory
@@ -87,10 +89,46 @@
     mode: "0750"
   loop:
     - data          # archived pages: screenshots, PDFs, singlefile HTML
-    - pgdata        # the Postgres cluster — the bookmarks themselves
     - meili_data    # the search index
     - caddy-data    # issued certificates and the ACME account key
     - caddy-config  # Caddy's own autosaved config
+
+- name: Create the Postgres data directory
+  # ⚠️ Deliberately declares NO owner, group or mode, and that is the whole
+  # point of it being its own task.
+  #
+  # The postgres image's entrypoint starts as root, runs initdb, then chowns
+  # PGDATA to the `postgres` user (uid 70 on alpine) and chmods it 0700 before
+  # dropping privileges — the server refuses to start on a directory it does
+  # not own. Listing pgdata alongside the others above meant Ansible re-asserted
+  # root:root 0750 on EVERY converge, silently taking the directory away from
+  # the running server.
+  #
+  # The failure is nastier than it sounds. Already-open file descriptors keep
+  # working, so Postgres stays up and `pg_isready` keeps passing; only NEW
+  # backend connections fail, with "could not open file
+  # global/pg_filenode.map: Permission denied" surfacing in the APP's logs
+  # rather than the database's. It cost this service its first deploy: healthy
+  # for sixteen minutes, then crash-looping, with nothing having changed but a
+  # second convergence.
+  #
+  # So this converges the directory to exactly what the server wants, rather
+  # than to what the rest of the stack wants. Explicit beats simply omitting
+  # owner and mode: omitting leaves the first-run state to the entrypoint and
+  # to umask, whereas this is the same on every run and says out loud which
+  # uid is meant to own the data.
+  ansible.builtin.file:
+    path: "{{ linkwarden_dir }}/pgdata"
+    state: directory
+    owner: "{{ linkwarden_postgres_uid }}"
+    group: "{{ linkwarden_postgres_uid }}"
+    # 0700, not 0750: Postgres refuses to start on a data directory with any
+    # group or world bits set.
+    mode: "0700"
+  # If this task had to change anything, a running server has just had its data
+  # directory moved out from under it and is now failing every new connection
+  # while still looking alive. Restarting is the only way back.
+  notify: Restart the linkwarden stack
 
 - name: Write the Caddy build file
   # Built rather than pulled. The official caddy image has no DNS provider
