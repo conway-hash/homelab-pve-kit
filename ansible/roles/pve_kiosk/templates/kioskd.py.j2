@@ -456,19 +456,61 @@ BOARD = " ".join(
 # ── guests ───────────────────────────────────────────────────────────
 
 
-def guest_memory(vmid, fallback):
+def guest_meminfo(vmid):
+    """MemAvailable, read from inside the guest.
+
+    The balloon driver reports total and FREE, and on Linux free is not the
+    same as available: the kernel fills otherwise-idle RAM with page cache and
+    hands it back the moment anything wants it. So total-minus-free counts
+    reclaimable cache as consumption.
+
+    That is not a rounding error. The links guest, having just pulled four
+    container images and compiled Caddy, showed 3632 MB of 3922 "used" — 93% —
+    while 2522 MB of it was cache and the machine was genuinely 28% full.
+    Proxmox's own UI draws the same misleading figure; that it agrees is not
+    evidence it is right.
+
+    /proc/meminfo is the only place MemAvailable exists, and the guest agent
+    can read it without SSH, a key, or a listening port.
+    """
+    out = agent_exec(vmid, "cat", "/proc/meminfo")
+    if not out:
+        return None
+    vals = {}
+    for line in out.splitlines():
+        key, _, rest = line.partition(":")
+        if key in ("MemTotal", "MemAvailable"):
+            parts = rest.split()
+            if parts and parts[0].isdigit():
+                vals[key] = int(parts[0]) * 1024   # /proc/meminfo is in kB
+    if "MemTotal" in vals and "MemAvailable" in vals:
+        return {"total": vals["MemTotal"], "available": vals["MemAvailable"]}
+    return None
+
+
+def guest_memory(vmid, fallback, meminfo=None):
     """What the guest is actually using, not what QEMU has mapped.
 
-    This is the bug the old dashboard had. `pvesh get /nodes/X/qemu` returns
-    a `mem` field that is the QEMU *process* RSS on the host — for vault
-    that reads 2.05 GiB against a 2 GiB assignment, i.e. over 100%, because
-    it counts the emulator's own overhead alongside the guest's RAM.
-    /status/current additionally carries `ballooninfo`, which the virtio
-    balloon driver inside the guest fills in: total_mem minus free_mem is
-    the number the guest itself would report, and the number Proxmox's own
-    UI draws. Where there is no agent and no balloon, fall back and say so,
-    rather than quietly showing the wrong one.
+    Three sources, in descending order of honesty:
+
+      agent    MemTotal - MemAvailable, read from /proc/meminfo inside the
+               guest. The only one that excludes reclaimable page cache.
+      balloon  total_mem - free_mem from the virtio balloon. What Proxmox's
+               own UI shows, and it counts cache as used — fine on an idle
+               guest, wildly alarming on one that has done any real I/O.
+      host-rss the QEMU *process* RSS on the host. For vault that reads
+               2.05 GiB against a 2 GiB assignment, i.e. over 100%, because
+               it counts the emulator's overhead alongside the guest's RAM.
+
+    Each is labelled, so a number that had to come from a worse source says so
+    rather than quietly passing for the good one.
     """
+    if meminfo:
+        return {
+            "used": meminfo["total"] - meminfo["available"],
+            "total": meminfo["total"],
+            "source": "agent",
+        }
     cur = pvesh(f"/nodes/{NODE}/qemu/{vmid}/status/current", timeout=8)
     if not cur:
         return {"used": fallback, "total": 0, "source": "host-rss"}
@@ -701,13 +743,20 @@ def guest_tick():
             "template": bool(g.get("template")),
         }
         if running and not is_lxc:
-            row["memory"] = guest_memory(vmid, g.get("mem", 0))
+            # The agent refresh has to happen BEFORE the memory figure is
+            # computed, because that is where the honest number comes from.
             if do_agent:
                 AGENT_CACHE[vmid] = {
                     "containers": guest_containers(vmid),
                     "fs": guest_filesystems(vmid),
+                    "meminfo": guest_meminfo(vmid),
                 }
-            row.update(AGENT_CACHE.get(vmid, {"containers": [], "fs": []}))
+            cached = AGENT_CACHE.get(vmid, {"containers": [], "fs": [],
+                                            "meminfo": None})
+            row["memory"] = guest_memory(vmid, g.get("mem", 0),
+                                         cached.get("meminfo"))
+            row["containers"] = cached.get("containers", [])
+            row["fs"] = cached.get("fs", [])
         elif running:
             row["memory"] = {
                 "used": g.get("mem", 0),
