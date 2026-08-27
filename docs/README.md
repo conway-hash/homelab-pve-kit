@@ -46,10 +46,16 @@ secret and the doc that explains it, before it changes anything on the host.
 
 Set the flag to `false`. What that means depends on where the service lives:
 
-**A service on its own guest** (`vault`): the `pve_guests` role **destroys the
-VM** on the next run, disk included. Run with `--check --diff` first if you
-want to see it coming. Backups from the `vzdump` job outlive the guest, but
-restoring one is a manual job.
+**A service on its own guest** (`vault`, `links`): the `pve_guests` role
+**destroys the VM** on the next run, disk included. Run with `--check --diff`
+first if you want to see it coming. Existing archives on `tank` outlive the
+guest, but restoring one is a manual job.
+
+Its nightly `vzdump` job is removed with it. That is deliberate: a backup job
+pointed at a vmid that no longer exists is accepted by Proxmox and then fails
+every night at the appointed hour, which trains you to ignore backup failure
+notifications — worse than having none. The same filter means a service that
+has never been switched on never gets a job in the first place.
 
 **A service on an existing machine** (`kiosk`): the role stops running, which
 means nothing new is installed — but **what a previous run already installed

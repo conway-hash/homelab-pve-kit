@@ -96,6 +96,30 @@
 # This lives here rather than in svc_vaultwarden because vzdump is a hypervisor
 # facility — the guest has no say in whether it is backed up, and shouldn't.
 
+# Which guests should HAVE a backup job: switched on, and carrying a `backup:`
+# policy. Both halves matter.
+#
+# The service filter is not decoration. Without it this role writes a nightly
+# vzdump job for every guest in the list including the switched-off ones —
+# whose VMs pve_guests has either destroyed or never created — and Proxmox
+# happily accepts a job for a vmid that does not exist, then fails it every
+# night at the appointed hour. That is exactly what happened the moment a
+# second service was added to the repo while still switched off.
+#
+# Computed here rather than reused from pve_guests, which looks like
+# duplication and is not: site.yml runs pve_host BEFORE pve_guests, so that
+# role's facts do not exist yet.
+- name: Work out which guests should have a backup job
+  ansible.builtin.set_fact:
+    pve_host_backup_wanted: >-
+      {{ pve_guests
+         | selectattr('service', 'in', _enabled)
+         | selectattr('backup', 'defined') | list }}
+  vars:
+    _enabled: >-
+      {{ service_enabled | dict2items | selectattr('value')
+         | map(attribute='key') | list }}
+
 - name: Read the current backup jobs
   ansible.builtin.command: pvesh get /cluster/backup --output-format json
   register: pve_host_backup_jobs
@@ -122,7 +146,7 @@
       - --notification-mode=notification-system
   # Derived from the guest list rather than a parallel list of its own, so a
   # vmid is written exactly once. A guest with no `backup:` key gets no job.
-  loop: "{{ pve_guests | selectattr('backup', 'defined') | list }}"
+  loop: "{{ pve_host_backup_wanted }}"
   loop_control:
     label: "{{ item.name }} (vmid {{ item.vmid }})"
   # pvesh has no upsert: creating the same job twice produces two jobs that
@@ -157,7 +181,7 @@
       - --compress={{ pve_backup_compress }}
       - --prune-backups=keep-daily={{ item.backup.keep_daily }}
       - --enabled=1
-  loop: "{{ pve_guests | selectattr('backup', 'defined') | list }}"
+  loop: "{{ pve_host_backup_wanted }}"
   loop_control:
     label: "{{ item.name }} (vmid {{ item.vmid }})"
   vars:
@@ -181,4 +205,32 @@
       or _job.compress | default('') != pve_backup_compress
       or (_job['prune-backups'] | default({}))
          != {'keep-daily': item.backup.keep_daily | string}
+  changed_when: true
+
+# The counterpart to the two tasks above. Switching a service off destroys its
+# guest (pve_guests does that), so leaving its backup job behind means a
+# nightly vzdump against a vmid that no longer exists, failing forever and
+# training you to ignore backup failure notifications — which is worse than
+# having none.
+#
+# Scoped to jobs this repo created, matched on the comment prefix. A job made
+# by hand in the web UI is never touched.
+- name: Remove backup jobs for guests that are switched off
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - delete
+      - /cluster/backup/{{ item.id }}
+  loop: >-
+    {{ pve_host_backup_jobs.stdout | from_json
+       | selectattr('comment', 'defined')
+       | selectattr('comment', 'match', '^homelab-pve-kit ')
+       | rejectattr('comment', 'in', _wanted_comments) | list }}
+  loop_control:
+    label: "{{ item.comment }} (job {{ item.id }})"
+  vars:
+    _wanted_comments: >-
+      {{ pve_host_backup_wanted
+         | map(attribute='name')
+         | map('regex_replace', '^', 'homelab-pve-kit ') | list }}
   changed_when: true
