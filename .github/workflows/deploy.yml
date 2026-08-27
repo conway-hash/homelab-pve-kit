@@ -127,15 +127,20 @@ jobs:
         # reusable: this node is a throwaway that should disappear on its
         # own, which is a different scope from the non-ephemeral key a
         # permanent machine joins with. Don't reuse one for the other.
+        # Through the environment, not interpolated into the script text —
+        # see "Write the vault secrets" for why that distinction matters.
+        env:
+          PVE_SSH_PRIVATE_KEY: ${{ secrets.PVE_SSH_PRIVATE_KEY }}
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
         run: |
           # `tailscale up` with an empty authkey does not fail — it prints a
           # login URL and BLOCKS waiting for a human, burning the whole job
           # timeout. Fail fast and name the fix instead.
-          if [ -z "${{ secrets.TS_AUTHKEY }}" ]; then
+          if [ -z "${TS_AUTHKEY}" ]; then
             echo "::error::TS_AUTHKEY is not set. Mint an ephemeral+reusable Headscale pre-auth key and add it as a repo secret — see SETUP.md step 4."
             exit 1
           fi
-          if [ -z "${{ secrets.PVE_SSH_PRIVATE_KEY }}" ]; then
+          if [ -z "${PVE_SSH_PRIVATE_KEY}" ]; then
             echo "::error::PVE_SSH_PRIVATE_KEY is not set — see SETUP.md step 4."
             exit 1
           fi
@@ -146,16 +151,20 @@ jobs:
           sudo tailscale up \
             --timeout=60s \
             --login-server="$LOGIN" \
-            --authkey="${{ secrets.TS_AUTHKEY }}" \
+            --authkey="${TS_AUTHKEY}" \
             --hostname="gh-runner-${GITHUB_RUN_ID}" \
             --accept-dns=true
           tailscale status
 
       - name: Write the deploy SSH key
+        # Through the environment, not interpolated into the script text —
+        # see "Write the vault secrets" for why that distinction matters.
+        env:
+          PVE_SSH_PRIVATE_KEY: ${{ secrets.PVE_SSH_PRIVATE_KEY }}
         run: |
           umask 077
           mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.PVE_SSH_PRIVATE_KEY }}" > ~/.ssh/homelab_ci_deploy
+          printf '%s\n' "${PVE_SSH_PRIVATE_KEY}" > ~/.ssh/homelab_ci_deploy
           chmod 600 ~/.ssh/homelab_ci_deploy
 
       - name: Write the inventory
@@ -165,8 +174,12 @@ jobs:
       # Only the hypervisor play creates guests, so only that leg needs the
       # Proxmox API token.
       - name: Write the hypervisor secrets
+        # Through the environment, not interpolated into the script text —
+        # see "Write the vault secrets" for why that distinction matters.
+        env:
+          PVE_API_TOKEN_SECRET: ${{ secrets.PVE_API_TOKEN_SECRET }}
         run: |
-          if [ -z "${{ secrets.PVE_API_TOKEN_SECRET }}" ]; then
+          if [ -z "${PVE_API_TOKEN_SECRET}" ]; then
             echo "::error::PVE_API_TOKEN_SECRET is not set — no guest can be created. See docs/README.md."
             exit 1
           fi
@@ -176,7 +189,7 @@ jobs:
           # a second secret. One keypair, one place it lives, no way for the two
           # halves to drift.
           {
-            printf 'pve_guests_api_token_secret: "%s"\n' "${{ secrets.PVE_API_TOKEN_SECRET }}"
+            printf 'pve_guests_api_token_secret: "%s"\n' "${PVE_API_TOKEN_SECRET}"
             printf 'pve_guests_ssh_public_key: "%s"\n' "$(ssh-keygen -y -f ~/.ssh/homelab_ci_deploy)"
           } > group_vars/pve_host/secrets.yml
 
@@ -296,15 +309,20 @@ jobs:
         # reusable: this node is a throwaway that should disappear on its
         # own, which is a different scope from the non-ephemeral key a
         # permanent machine joins with. Don't reuse one for the other.
+        # Through the environment, not interpolated into the script text —
+        # see "Write the vault secrets" for why that distinction matters.
+        env:
+          PVE_SSH_PRIVATE_KEY: ${{ secrets.PVE_SSH_PRIVATE_KEY }}
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
         run: |
           # `tailscale up` with an empty authkey does not fail — it prints a
           # login URL and BLOCKS waiting for a human, burning the whole job
           # timeout. Fail fast and name the fix instead.
-          if [ -z "${{ secrets.TS_AUTHKEY }}" ]; then
+          if [ -z "${TS_AUTHKEY}" ]; then
             echo "::error::TS_AUTHKEY is not set. Mint an ephemeral+reusable Headscale pre-auth key and add it as a repo secret — see SETUP.md step 4."
             exit 1
           fi
-          if [ -z "${{ secrets.PVE_SSH_PRIVATE_KEY }}" ]; then
+          if [ -z "${PVE_SSH_PRIVATE_KEY}" ]; then
             echo "::error::PVE_SSH_PRIVATE_KEY is not set — see SETUP.md step 4."
             exit 1
           fi
@@ -315,31 +333,45 @@ jobs:
           sudo tailscale up \
             --timeout=60s \
             --login-server="$LOGIN" \
-            --authkey="${{ secrets.TS_AUTHKEY }}" \
+            --authkey="${TS_AUTHKEY}" \
             --hostname="gh-runner-${GITHUB_RUN_ID}" \
             --accept-dns=true
           tailscale status
 
       - name: Write the deploy SSH key
+        # Through the environment, not interpolated into the script text —
+        # see "Write the vault secrets" for why that distinction matters.
+        env:
+          PVE_SSH_PRIVATE_KEY: ${{ secrets.PVE_SSH_PRIVATE_KEY }}
         run: |
           umask 077
           mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.PVE_SSH_PRIVATE_KEY }}" > ~/.ssh/homelab_ci_deploy
+          printf '%s\n' "${PVE_SSH_PRIVATE_KEY}" > ~/.ssh/homelab_ci_deploy
           chmod 600 ~/.ssh/homelab_ci_deploy
 
       - name: Write the inventory
         run: |
           cp inventory/hosts.ini.example inventory/hosts.ini
 
-      # Only the hypervisor play creates guests, so only that leg needs the
-      # Proxmox API token.
+      # Scoped to this job, so the vault's credentials never exist in the run
+      # that only converges the hypervisor.
       - name: Write the vault secrets
+        # Secrets come through the environment, never interpolated into the
+        # script text. GitHub substitutes ${{ secrets.X }} into the shell source
+        # BEFORE bash parses it, so a secret containing $ — an Argon2 hash, for
+        # instance — turns into shell variable expansions and arrives empty.
+        # That is not hypothetical: it silently truncated the vault's admin
+        # token to a 59-character fragment with every $-segment gone.
+        env:
+          SVC_VAULTWARDEN_ADMIN_TOKEN: ${{ secrets.SVC_VAULTWARDEN_ADMIN_TOKEN }}
+          SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN: ${{ secrets.SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN }}
+          SVC_VAULTWARDEN_TS_AUTHKEY: ${{ secrets.SVC_VAULTWARDEN_TS_AUTHKEY }}
         run: |
-          if [ -z "${{ secrets.SVC_VAULTWARDEN_ADMIN_TOKEN }}" ]; then
+          if [ -z "${SVC_VAULTWARDEN_ADMIN_TOKEN}" ]; then
             echo "::error::SVC_VAULTWARDEN_ADMIN_TOKEN is not set — see docs/vault.md."
             exit 1
           fi
-          if [ -z "${{ secrets.SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN }}" ]; then
+          if [ -z "${SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN}" ]; then
             echo "::error::SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN is not set. Caddy cannot obtain a certificate without it, and every Bitwarden client refuses a non-HTTPS server — see docs/vault.md."
             exit 1
           fi
@@ -358,9 +390,9 @@ jobs:
           # and YAML's indent stripping is not obvious enough to bet a secrets
           # file on.
           {
-            printf 'tailscale_authkey: "%s"\n'       "${{ secrets.SVC_VAULTWARDEN_TS_AUTHKEY }}"
-            printf 'svc_vaultwarden_admin_token: "%s"\n' "${{ secrets.SVC_VAULTWARDEN_ADMIN_TOKEN }}"
-            printf 'svc_vaultwarden_cloudflare_api_token: "%s"\n'    "${{ secrets.SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN }}"
+            printf 'tailscale_authkey: "%s"\n'       "${SVC_VAULTWARDEN_TS_AUTHKEY}"
+            printf 'svc_vaultwarden_admin_token: "%s"\n' "${SVC_VAULTWARDEN_ADMIN_TOKEN}"
+            printf 'svc_vaultwarden_cloudflare_api_token: "%s"\n'    "${SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN}"
           } > group_vars/vault_host/secrets.yml
 
       - name: Run playbook

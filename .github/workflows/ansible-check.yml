@@ -53,8 +53,12 @@ jobs:
           ansible-galaxy collection install -r requirements.yml
 
       - name: Join the tailnet
+        # Through the environment, not interpolated into the script text —
+        # see "Write the vault secrets" for why that distinction matters.
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
         run: |
-          if [ -z "${{ secrets.TS_AUTHKEY }}" ]; then
+          if [ -z "${TS_AUTHKEY}" ]; then
             echo "::error::TS_AUTHKEY is not set — see SETUP.md step 4."
             exit 1
           fi
@@ -64,27 +68,35 @@ jobs:
           sudo tailscale up \
             --timeout=60s \
             --login-server="$LOGIN" \
-            --authkey="${{ secrets.TS_AUTHKEY }}" \
+            --authkey="${TS_AUTHKEY}" \
             --hostname="gh-check-${GITHUB_RUN_ID}" \
             --accept-dns=true
 
       - name: Write credentials
+        # Through the environment, not interpolated into the script text —
+        # see "Write the vault secrets" for why that distinction matters.
+        env:
+          PVE_API_TOKEN_SECRET: ${{ secrets.PVE_API_TOKEN_SECRET }}
+          PVE_SSH_PRIVATE_KEY: ${{ secrets.PVE_SSH_PRIVATE_KEY }}
+          SVC_VAULTWARDEN_ADMIN_TOKEN: ${{ secrets.SVC_VAULTWARDEN_ADMIN_TOKEN }}
+          SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN: ${{ secrets.SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN }}
+          SVC_VAULTWARDEN_TS_AUTHKEY: ${{ secrets.SVC_VAULTWARDEN_TS_AUTHKEY }}
         run: |
           umask 077
           mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.PVE_SSH_PRIVATE_KEY }}" > ~/.ssh/homelab_ci_deploy
+          printf '%s\n' "${PVE_SSH_PRIVATE_KEY}" > ~/.ssh/homelab_ci_deploy
           chmod 600 ~/.ssh/homelab_ci_deploy
           cp inventory/hosts.ini.example inventory/hosts.ini
 
           {
-            printf 'pve_guests_api_token_secret: "%s"\n' "${{ secrets.PVE_API_TOKEN_SECRET }}"
+            printf 'pve_guests_api_token_secret: "%s"\n' "${PVE_API_TOKEN_SECRET}"
             printf 'pve_guests_ssh_public_key: "%s"\n' "$(ssh-keygen -y -f ~/.ssh/homelab_ci_deploy)"
           } > group_vars/pve_host/secrets.yml
 
           {
-            printf 'tailscale_authkey: "%s"\n' "${{ secrets.SVC_VAULTWARDEN_TS_AUTHKEY }}"
-            printf 'svc_vaultwarden_admin_token: "%s"\n' "${{ secrets.SVC_VAULTWARDEN_ADMIN_TOKEN }}"
-            printf 'svc_vaultwarden_cloudflare_api_token: "%s"\n' "${{ secrets.SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN }}"
+            printf 'tailscale_authkey: "%s"\n' "${SVC_VAULTWARDEN_TS_AUTHKEY}"
+            printf 'svc_vaultwarden_admin_token: "%s"\n' "${SVC_VAULTWARDEN_ADMIN_TOKEN}"
+            printf 'svc_vaultwarden_cloudflare_api_token: "%s"\n' "${SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN}"
           } > group_vars/vault_host/secrets.yml
 
       # The gating check. The hypervisor always exists, and this is where the
