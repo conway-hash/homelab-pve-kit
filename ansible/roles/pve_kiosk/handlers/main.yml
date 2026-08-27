@@ -21,6 +21,23 @@
 # exists to prevent. `systemctl try-restart` has these semantics in one
 # word, but reaching for it means the command module in place of a module
 # that exists, so this pays two tasks instead.
+- name: Show the new page on the screen
+  # cog loads index.html once, at login, and never asks again — so a deploy
+  # that changes the page leaves the monitor showing the previous one until
+  # something restarts the session. That caught us twice: the daemon was
+  # serving the new dashboard while the screen still had the old one on it.
+  #
+  # Restarting the autologin getty re-runs root's .bash_profile, which is
+  # what launches cage and cog. Costs a black screen for a few seconds, and
+  # only happens when the page or the daemon actually changed — an otherwise
+  # converged run notifies nothing and the screen is left alone.
+  #
+  # Ordered after the daemon restart above so the browser comes back to a
+  # server already serving the new page.
+  ansible.builtin.systemd_service:
+    name: getty@tty1.service
+    state: restarted
+
 - name: Find out whether the lofi stream is playing
   ansible.builtin.service_facts:
   listen: Bounce a playing lofi stream

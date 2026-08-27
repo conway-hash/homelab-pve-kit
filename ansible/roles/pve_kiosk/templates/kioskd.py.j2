@@ -19,6 +19,7 @@
 # Nothing but the standard library — python3 is already on a Proxmox host
 # because Proxmox itself uses it, and adding a web framework to hand JSON
 # to a browser on the same machine would be the heavier choice.
+import fnmatch
 import json
 import os
 import re
@@ -41,6 +42,8 @@ SLOW = {{ kiosk_slow_seconds }}
 KEEP = {{ kiosk_history_points }}
 GPU_NAME_OVERRIDE = {{ kiosk_gpu_name | to_json }}
 HTTPS_HOSTS = {{ kiosk_https_check_hosts | to_json }}
+TAILNET_HIDE = {{ kiosk_tailnet_hide | to_json }}
+NODE_KINDS = {{ kiosk_node_kinds | to_json }}
 CONTROL_URL = "{{ headscale_server_url }}"
 LOFI = {
     "url": {{ kiosk_lofi_url | to_json }},
@@ -296,7 +299,11 @@ def net_counters():
     for line in read("/proc/net/dev").splitlines()[2:]:
         name, _, rest = line.partition(":")
         name = name.strip()
-        if not re.fullmatch(r"(vmbr\d+|tailscale\d+|en\w+|eth\d+|tap\d+i\d+)", name):
+        # tap interfaces are deliberately absent: a tap is one guest's
+        # virtual NIC, and that guest's own card already carries its traffic.
+        # Collecting a series per guest here only grew the payload and the
+        # network panel with numbers that belong somewhere else.
+        if not re.fullmatch(r"(vmbr\d+|tailscale\d+)", name):
             continue
         f = rest.split()
         out[name] = (int(f[0]), int(f[8]))
@@ -457,11 +464,23 @@ def agent_exec(vmid, *argv, timeout=12):
 
 
 def guest_containers(vmid):
+    """Every container, with whether its own healthcheck is passing.
+
+    One `docker inspect` rather than `docker ps`, because the human-readable
+    status string is the only place `ps` puts health, and reading "(healthy)"
+    out of prose cannot distinguish "declares a check and passes it" from
+    "declares no check at all". That distinction is the whole point: a
+    container with no healthcheck is not unhealthy, and must not be drawn as
+    though it were.
+    """
     out = agent_exec(
         vmid,
         "/bin/sh",
         "-c",
-        "docker ps -a --format '{% raw %}{{.Names}}\\t{{.State}}\\t{{.Status}}\\t{{.Image}}{% endraw %}' 2>/dev/null",
+        "docker ps -aq | xargs -r docker inspect --format "
+        "'{% raw %}{{.Name}}\t{{.State.Status}}\t{{.Config.Image}}\t"
+        "{{if .Config.Healthcheck}}{{if .State.Health}}{{.State.Health.Status}}"
+        "{{else}}unknown{{end}}{{else}}none{{end}}{% endraw %}' 2>/dev/null",
     )
     if not out:
         return []
@@ -470,16 +489,18 @@ def guest_containers(vmid):
         parts = line.split("\t")
         if len(parts) < 4:
             continue
+        name, state, image, health = parts[0].lstrip("/"), parts[1], parts[2], parts[3]
         rows.append(
             {
-                "name": parts[0],
-                "state": parts[1],
-                "status": parts[2],
-                "image": parts[3].split("@")[0],
-                # docker reports "(healthy)" inside the human status string
-                # and nowhere machine-readable in this format.
-                "healthy": "(healthy)" in parts[2],
-                "unhealthy": "(unhealthy)" in parts[2],
+                "name": name,
+                "state": state,
+                "image": image.split("@")[0],
+                # none    — no healthcheck defined, so running is all we know
+                # healthy — defined and passing
+                # starting/unhealthy/unknown — defined and not passing yet
+                "health": health,
+                "ok": state == "running" and health in ("healthy", "none"),
+                "warn": state == "running" and health not in ("healthy", "none"),
             }
         )
     return sorted(rows, key=lambda r: r["name"])
@@ -635,6 +656,25 @@ def tailnet_tick():
     guest_names = {g["name"].lower() for g in ST.guests}
     relays = set()
 
+    def kind_of(name, os_name, me, is_guest):
+        """What this node physically is, for picking an icon.
+
+        Tailscale reports an OS and nothing else, which separates a phone
+        from everything with a Linux kernel and stops there — a laptop, a
+        Raspberry Pi and a hypervisor are all "linux". So the two facts this
+        box genuinely knows come first (it is itself; it hosts this guest),
+        and anything finer has to be told to it via kiosk_node_kinds.
+        """
+        if name in NODE_KINDS:
+            return NODE_KINDS[name]
+        if me:
+            return "server"
+        if is_guest:
+            return "vm"
+        if (os_name or "").lower() in ("android", "ios", "iphone", "ipados"):
+            return "phone"
+        return "desktop"
+
     def node(p, me=False):
         name = p.get("HostName") or "?"
         dns = (p.get("DNSName") or "").rstrip(".")
@@ -662,11 +702,22 @@ def tailnet_tick():
             # hosting another, so matching the tailnet name against the
             # guest list is what tells us vault lives on pve.
             "parent": NODE if (not me and name.lower() in guest_names) else None,
+            "kind": kind_of(name, p.get("OS", ""), me, name.lower() in guest_names),
             "https": None,
         }
 
     nodes = [node(ts["Self"], me=True)]
-    nodes += [node(p) for p in (ts.get("Peer") or {}).values()]
+    nodes += [
+        node(p)
+        for p in (ts.get("Peer") or {}).values()
+        # CI joins the tailnet as an ephemeral node for the length of a
+        # deploy and is reaped afterwards. Drawing it means a machine with a
+        # run-ID for a name appears on the screen for five minutes and is
+        # gone before anyone asks what it was.
+        if not any(
+            fnmatch.fnmatch(p.get("HostName") or "", pat) for pat in TAILNET_HIDE
+        )
+    ]
 
     wanted = [n for n in nodes if n["online"] and (not HTTPS_HOSTS or n["name"] in HTTPS_HOSTS)]
     threads = []

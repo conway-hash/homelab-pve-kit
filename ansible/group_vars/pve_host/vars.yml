@@ -101,10 +101,10 @@ kiosk_history_points: 600
 
 # ── What the screen shows ────────────────────────────────────────────
 
-# Seconds a guest tab stays up before the view rotates to the next
-# non-empty one. Rotation pauses the moment the keyboard or mouse is
-# touched and resumes after kiosk_idle_seconds of quiet.
-kiosk_tab_seconds: 5
+# Quiet time before the mouse pointer is hidden. The guest tabs used to
+# rotate on a timer too; that is gone. A screen that changes on its own is
+# one you can never look away from and come back to, and picking the tab is
+# a keypress away (1/2/3, or the arrows).
 kiosk_idle_seconds: 45
 
 # The GPU's real product name. PCI ID 1002:67df is shared by the whole
@@ -119,6 +119,48 @@ kiosk_gpu_name: "Sapphire Nitro+ Radeon RX 580 4GB"
 # The probe is a TCP connect to 443 plus a certificate read — no request is
 # ever sent, so nothing is logged as traffic on the far end.
 kiosk_https_check_hosts: []
+
+# Tailnet hostnames to leave off the graph, as fnmatch patterns.
+#
+# CI joins the tailnet as an ephemeral node for the length of a deploy and
+# headscale reaps it afterwards. Without this a machine called
+# gh-runner-33068555390 appears on the screen for five minutes and is gone
+# again before anyone can ask what it was.
+kiosk_tailnet_hide:
+  - "gh-runner-*"
+  - "gh-check-*"
+
+# What each tailnet node physically IS, so the graph can draw it as itself.
+#
+# Only needed where the kiosk cannot work it out. It already knows it is the
+# server, and that a node matching one of its own guests is a VM; Tailscale's
+# own data separates a phone from everything else and stops there, because a
+# laptop, a Raspberry Pi and a hypervisor all report "linux".
+#
+# Recognised: server, vm, pi, laptop, phone, desktop.
+kiosk_node_kinds:
+  cachyos-laptop: laptop
+  homeassistant: pi
+
+# The ceiling the network graphs are drawn against, in bytes/sec.
+#
+# This box's NIC is 1 Gbit (nic0 reports 1000 Mb/s; vmbr0 claims 10000, which
+# is a bridge reporting an aggregate it cannot actually reach). Scaling to the
+# full line rate is honest and useless: ordinary traffic here is single-digit
+# MB/s, which draws a flat line on the floor. Roughly a tenth of it makes
+# everyday traffic legible, and anything faster clips at the top where you can
+# still see it happened.
+#
+# Binary MB, because that is the unit the page prints everywhere else — as a
+# decimal 12 500 000 this rendered as "11.9 MB/s" on a label claiming 12.5.
+kiosk_net_scale_bytes: 13107200   # 12.5 MiB/s
+
+# The interface the network graphs draw. vmbr0 is the bridge every guest and
+# the host itself sit on, so it is the one number that means "this machine's
+# traffic". tailscale0 is still collected and shown as a figure, but it is a
+# subset of this one — a byte in the tunnel is counted again on the bridge,
+# encrypted — so graphing both draws the same traffic twice.
+kiosk_net_primary: vmbr0
 
 # ── The lofi stream ──────────────────────────────────────────────────
 #

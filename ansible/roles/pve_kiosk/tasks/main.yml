@@ -85,7 +85,9 @@
     group: root
     mode: "0755"
     validate: python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" %s
-  notify: Restart the kiosk daemon
+  notify:
+    - Restart the kiosk daemon
+    - Show the new page on the screen
 
 - name: Install the dashboard page
   ansible.builtin.template:
@@ -94,10 +96,11 @@
     owner: root
     group: root
     mode: "0644"
-  # The daemon reads the page off disk per request, so there is nothing to
-  # restart — a browser refresh is enough. It is notified anyway because
-  # the page and the API it talks to are versioned together.
-  notify: Restart the kiosk daemon
+  # Two handlers: the daemon and the API it serves are versioned with the
+  # page, and the browser has to be told to re-read it.
+  notify:
+    - Restart the kiosk daemon
+    - Show the new page on the screen
 
 - name: Install the lofi player
   ansible.builtin.template:

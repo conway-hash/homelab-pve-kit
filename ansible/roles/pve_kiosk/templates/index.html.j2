@@ -5,97 +5,116 @@
 <meta charset="utf-8">
 <title>{{ pve_node }}</title>
 <style>
+/* Five colours, each with exactly one meaning, reused everywhere:
+   accent = a measurement, good = running/direct/healthy, warn = wants a
+   look, bad = broken, dim = off or absent. Anything not one of those five
+   is a shade of the background or the text. */
 :root{
   --bg:#080b11; --card:#101722; --card2:#0c121a; --line:#1e2836; --line2:#161e29;
-  --fg:#dde5f0; --mut:#8494a8; --faint:#41505f;
-  --blue:#4c9aff; --green:#4ec9a5; --amber:#e0a34a; --red:#e05c5c;
-  --violet:#9b8cff; --pink:#e07ab0; --cyan:#48c4d8;
+  --fg:#dde5f0; --mut:#8494a8; --dim:#41505f;
+  --accent:#4c9aff; --good:#4ec9a5; --warn:#e0a34a; --bad:#e05c5c;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{background:radial-gradient(1200px 640px at 78% -16%,#131e2c 0%,transparent 60%),var(--bg);
      color:var(--fg);overflow:hidden;font:13px/1.5 "DejaVu Sans",system-ui,sans-serif}
-/* The cursor only hides once nothing has been touched for a while. The old
-   page hid it unconditionally, which is wrong now there is a mouse plugged
-   in and things on screen worth clicking. */
 body.idle{cursor:none}
 .mono{font-family:"DejaVu Sans Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
 
 #app{height:100vh;display:grid;gap:10px;padding:10px;
-     grid-template-columns:352px minmax(0,1.05fr) minmax(0,1fr) minmax(0,1fr);
+     grid-template-columns:352px minmax(0,1.05fr) minmax(0,1.5fr) minmax(0,.5fr);
      grid-template-rows:auto minmax(0,1fr) minmax(0,1fr);
      grid-template-areas:
        "top top  top   top"
        "sys vms  tnet  tnet"
-       "sys vms  notif logs";}
+       "sys vms  logs  notif";}
 .card{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);
       border-radius:11px;padding:12px 14px;overflow:hidden;position:relative;
       display:flex;flex-direction:column;min-height:0}
 .t{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut);
    margin-bottom:10px;display:flex;align-items:center;gap:9px;flex:none}
 .t::after{content:"";flex:1;height:1px;background:var(--line)}
-.t i{font-style:normal;color:var(--faint);letter-spacing:0;text-transform:none;font-size:10.5px}
-.t b{color:var(--fg);letter-spacing:0;text-transform:none;font-size:11px;font-weight:600}
 .scroll{overflow-y:auto;flex:1;min-height:0;scrollbar-width:thin;
         scrollbar-color:var(--line) transparent}
 
 /* ── header ───────────────────────────────────────────────────── */
-#top{grid-area:top;display:flex;align-items:center;gap:10px;padding:9px 14px;flex-direction:row}
-#name{font-size:19px;font-weight:600;line-height:1.2}
-#name em{display:block;font-style:normal;color:var(--faint);font-weight:400;font-size:10.5px}
+#top{grid-area:top;display:grid;grid-template-columns:1fr auto 1fr;
+     align-items:center;padding:9px 16px}
+#brand{font-size:30px;font-weight:600;letter-spacing:-.01em;line-height:1.1;white-space:nowrap}
+#pills{justify-self:center;display:flex;gap:9px;align-items:center}
 .pill{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--mut);
       background:#0b1118;border:1px solid var(--line);border-radius:99px;
       padding:5px 11px;white-space:nowrap}
 .pill b{font-weight:600;color:var(--fg)}
-.pill.act{cursor:pointer;border-color:var(--amber);color:var(--amber)}
-.led{width:7px;height:7px;border-radius:50%;background:var(--faint);flex:none}
-/* Steady when things are fine. Only a problem gets to move — a healthy
-   dashboard that breathes at you is just noise you learn to ignore. */
-.led.ok{background:var(--green)}
-.led.warn{background:var(--amber)}
-.led.bad{background:var(--red);animation:blink 1.1s steps(1,end) infinite}
+.pill.act{cursor:pointer;border-color:var(--warn);color:var(--warn)}
+.led{width:7px;height:7px;border-radius:50%;background:var(--dim);flex:none}
+.led.ok{background:var(--good)}
+.led.warn{background:var(--warn)}
+.led.bad{background:var(--bad);animation:blink 1.1s steps(1,end) infinite}
 @keyframes blink{50%{opacity:.25}}
-#when{margin-left:auto;text-align:right;line-height:1.15}
+#when{justify-self:end;text-align:right;line-height:1.12}
 #clock{font-size:30px;font-weight:600;letter-spacing:-.01em}
-#date{font-size:15px;color:var(--fg);font-weight:500}
-#date small{color:var(--mut);font-weight:400}
+/* Day and date are one sentence at one size. They were a bold word above a
+   muted footnote, which read as two unrelated things. */
+#date{font-size:15px;font-weight:500;color:var(--mut)}
+#date b{color:var(--fg);font-weight:600}
 
 /* ── system column ────────────────────────────────────────────── */
 #sys{grid-area:sys}
-.blk{margin-bottom:13px}
+.blk{margin-bottom:16px}
 .blk:last-child{margin-bottom:2px}
-.bh{display:flex;align-items:baseline;gap:8px;margin-bottom:4px}
-.bh .l{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut);flex:none}
-.bh .sub2{font-size:10px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bh .v{margin-left:auto;font-size:15px;font-weight:600;flex:none}
-.bh .v small{font-size:10.5px;color:var(--mut);font-weight:400}
+/* One shape for every section: NAME on the left, hardware on the right, the
+   number under it, the graph under that, then a fixed stat grid. */
+.bh{display:flex;align-items:baseline;gap:8px}
+.bh .l{font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+       color:var(--fg);font-weight:600;flex:none}
+.bh .hw{margin-left:auto;font-size:10px;color:var(--dim);
+        overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.big{font-size:26px;font-weight:600;line-height:1.15;margin:1px 0 3px}
+.big small{font-size:12px;color:var(--mut);font-weight:400;margin-left:2px}
+.big .side{float:right;font-size:12px;color:var(--mut);font-weight:400;margin-top:11px}
+.big .side b{color:var(--fg);font-weight:600}
 .chart{width:100%;display:block}
-.sub{font-size:10.5px;color:var(--mut);margin-top:3px;display:flex;gap:10px;flex-wrap:wrap}
-.sub span{white-space:nowrap}
-.sub b{color:var(--fg);font-weight:600}
 
-/* per-core grid: twelve threads, so twelve cells */
-#cores{display:grid;grid-template-columns:repeat(6,1fr);gap:3px;margin-top:5px}
+/* Two fixed columns. Values are tabular and right-aligned in their own cell,
+   so a number going from 9 W to 146 W moves nothing else on the screen —
+   which is what made the GPU rows jump about. */
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+       gap:1px 12px;margin-top:5px}
+.stats div{display:flex;justify-content:space-between;gap:6px;
+           font-size:10.5px;color:var(--mut);white-space:nowrap}
+.stats b{color:var(--fg);font-weight:600;
+         font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+         font-variant-numeric:tabular-nums}
+
+.trk{height:5px;background:#070b10;border-radius:3px;overflow:hidden;margin-top:4px}
+.trk>i{display:block;height:100%;border-radius:3px;width:0;
+       transition:width .6s ease,background .4s}
+
+#cores{display:grid;grid-template-columns:repeat(6,1fr);gap:3px;margin-top:6px}
 .core{background:#0a0f16;border:1px solid var(--line2);border-radius:4px;
-      padding:2px 0 0;position:relative;overflow:hidden;height:30px;
-      display:flex;flex-direction:column;align-items:center;justify-content:center}
+      position:relative;overflow:hidden;height:30px;
+      display:flex;align-items:center;justify-content:center}
 .core i{position:absolute;left:0;bottom:0;width:100%;opacity:.22;transition:height .35s linear}
-.core u{font-style:normal;text-decoration:none;font-size:8px;color:var(--faint);
+.core u{font-style:normal;text-decoration:none;font-size:8px;color:var(--dim);
         position:absolute;top:1px;left:3px}
 .core span{font-size:11px;font-weight:600;position:relative;z-index:1}
 
-.trk{height:5px;background:#070b10;border-radius:3px;overflow:hidden;margin-top:3px}
-.trk>i{display:block;height:100%;border-radius:3px;width:0;transition:width .6s ease,background .4s}
+.net{margin-bottom:9px}
+.net .hd{display:flex;align-items:baseline;gap:7px;font-size:10.5px;color:var(--mut)}
+.net .hd b{margin-left:auto;color:var(--fg);font-weight:600;
+           font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+           font-variant-numeric:tabular-nums}
 
-/* filesystems, readable: one row per mount, name and numbers on one line */
-.fs{margin-bottom:8px}
+.fs{margin-bottom:9px}
 .fs .r1{display:flex;align-items:baseline;gap:7px;font-size:12px}
-.fs .r1 b{font-weight:600}
-.fs .r1 .ty{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);
+.fs .r1 .ty{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);
             border:1px solid var(--line);border-radius:3px;padding:0 4px}
-.fs .r1 .pc{margin-left:auto;font-weight:600}
+/* White, like every other percentage on the page. The bar carries the
+   warning colour; the number is just a number. */
+.fs .r1 .pc{margin-left:auto;font-weight:600;color:var(--fg)}
 .fs .r2{font-size:10.5px;color:var(--mut);display:flex;gap:8px}
-.fs .r2 .dev{color:var(--faint);margin-left:auto}
+.fs .r2 .dev{color:var(--dim);margin-left:auto}
 
 /* ── guests ───────────────────────────────────────────────────── */
 #vms{grid-area:vms}
@@ -103,107 +122,103 @@ body.idle{cursor:none}
 .tab{flex:1;border:1px solid var(--line);background:#0b1118;border-radius:7px;
      padding:6px 8px;cursor:pointer;text-align:left;color:var(--mut);
      font:inherit;font-size:10px;letter-spacing:.1em;text-transform:uppercase;
-     position:relative;overflow:hidden;transition:color .25s,border-color .25s,opacity .25s}
-.tab b{display:block;font-size:16px;letter-spacing:0;color:var(--fg);font-weight:600;margin-top:1px}
-.tab.on{border-color:var(--blue);color:var(--blue)}
-.tab.on b{color:var(--fg)}
-/* Three states, deliberately distinguishable at a glance: selected, has
-   something in it, and empty. Empty fades rather than disappearing, so the
-   tab bar does not reflow every time a guest starts. */
+     transition:color .2s,border-color .2s,opacity .2s}
+.tab b{display:block;font-size:16px;letter-spacing:0;color:var(--fg);font-weight:600}
+.tab.on{border-color:var(--accent);color:var(--accent)}
 .tab.empty{opacity:.34}
-.tab.empty b{color:var(--faint)}
-.tab .rot{position:absolute;left:0;bottom:0;height:2px;background:var(--blue);width:0}
-.tab.on .rot.run{animation:rot linear forwards}
-@keyframes rot{from{width:0}to{width:100%}}
+.tab.empty b{color:var(--dim)}
 
 .g{border:1px solid var(--line2);border-radius:8px;padding:9px 10px;margin-bottom:8px;
    background:#0a1017}
 .g.off{opacity:.55}
-.gh{display:flex;align-items:center;gap:7px;margin-bottom:2px}
+.gh{display:flex;align-items:center;gap:7px}
 .gh .n{font-weight:600;font-size:14px}
 .gh .up{margin-left:auto;font-size:10.5px;color:var(--mut)}
 .tag{font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:var(--mut);
      border:1px solid var(--line);border-radius:4px;padding:0 5px}
-.gdns{font-size:10px;color:var(--faint);margin-bottom:6px}
+.gdns{font-size:10px;color:var(--dim);margin-bottom:5px}
 .gm{display:grid;grid-template-columns:26px 1fr auto;gap:5px 7px;align-items:center;
     font-size:9.5px;color:var(--mut);letter-spacing:.06em;text-transform:uppercase}
-.gm .val{font-size:11px;color:var(--fg);text-transform:none;letter-spacing:0;text-align:right}
+.gm .val{font-size:11px;color:var(--fg);text-transform:none;letter-spacing:0;
+         text-align:right;font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+         font-variant-numeric:tabular-nums}
 .gm .val s{text-decoration:none;color:var(--mut)}
 .gm .gc{height:26px;width:100%;display:block}
-.galloc{font-size:10px;color:var(--faint);margin:6px 0 2px;display:flex;gap:9px;flex-wrap:wrap}
-.galloc b{color:var(--mut);font-weight:400}
+.galloc{font-size:10px;color:var(--dim);margin:6px 0 2px}
 .ctrs{margin-top:7px;border-top:1px solid var(--line2);padding-top:6px;
       display:flex;flex-wrap:wrap;gap:4px}
-.ctr{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--mut);
+.ctr{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--fg);
      background:#0c131b;border:1px solid var(--line2);border-radius:5px;padding:2px 6px}
-.ctr b{color:var(--fg);font-weight:500}
-.empty-note{color:var(--faint);font-size:12px;text-align:center;padding:28px 0}
+.empty-note{color:var(--dim);font-size:12px;text-align:center;padding:28px 0}
 
 /* ── tailnet ──────────────────────────────────────────────────── */
 #tnet{grid-area:tnet}
 #msvg{flex:1;width:100%;min-height:0}
 .edge{fill:none;stroke-linecap:round}
-.e-direct{stroke:var(--green);stroke-width:1.9;opacity:.8}
-.e-relay{stroke:var(--amber);stroke-width:1.9;stroke-dasharray:6 5;opacity:.85;
+.e-direct{stroke:var(--good);stroke-width:1.9;opacity:.8}
+.e-relay{stroke:var(--warn);stroke-width:1.9;stroke-dasharray:6 5;opacity:.85;
          animation:flow 1.4s linear infinite}
 @keyframes flow{to{stroke-dashoffset:-11}}
-.e-off{stroke:var(--faint);stroke-width:1.1;stroke-dasharray:2 5;opacity:.5}
-.hull{fill:var(--blue);fill-opacity:.05;stroke:var(--blue);stroke-opacity:.28;
+.e-off{stroke:var(--dim);stroke-width:1.1;stroke-dasharray:2 5;opacity:.5}
+.ico{fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.hull{fill:var(--accent);fill-opacity:.05;stroke:var(--accent);stroke-opacity:.28;
       stroke-width:1;stroke-dasharray:4 4}
-.hull-l{fill:var(--blue);font-size:9px;opacity:.6;letter-spacing:.1em}
+.hull-l{fill:var(--accent);font-size:9px;opacity:.6;letter-spacing:.1em}
 .nlbl{fill:var(--fg);font-size:11px;font-weight:600}
 .nsub{fill:var(--mut);font-size:9px}
 .nlink{font-size:9px}
-.lblbg{fill:#0b1119;fill-opacity:.86;stroke:var(--line2);stroke-width:1;rx:4}
-#relays{font-size:9.5px;color:var(--faint);flex:none;padding-top:5px;
+.lblbg{fill:#0b1119;fill-opacity:.9;stroke:var(--line2);stroke-width:1}
+#relays{font-size:9.5px;color:var(--dim);flex:none;padding-top:5px;
         border-top:1px solid var(--line2);margin-top:4px}
 #relays b{color:var(--mut);font-weight:500}
 
-/* ── notifications & logs ─────────────────────────────────────── */
-#notif{grid-area:notif}
+/* ── logs & alerts ────────────────────────────────────────────── */
 #logs{grid-area:logs}
+#notif{grid-area:notif}
+.lgh,.lg{display:grid;grid-template-columns:46px 60px 90px minmax(0,1fr);
+         gap:8px;align-items:baseline}
+.lgh{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);
+     padding-bottom:4px;border-bottom:1px solid var(--line);margin-bottom:2px;flex:none}
+.lg{padding:4px 0;font-size:10.5px;border-bottom:1px solid var(--line2)}
+.lg:last-child{border-bottom:0}
+.lg .tm{color:var(--dim);font-family:"DejaVu Sans Mono",ui-monospace,monospace}
+.lg .src,.lg .who{color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lg .ms{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
+.lg.bad .ms{color:var(--bad)} .lg.warn .ms{color:var(--warn)}
+
 .al{display:flex;gap:8px;padding:7px 0;border-bottom:1px solid var(--line2);font-size:11.5px}
 .al:last-child{border-bottom:0}
 .al .ic{flex:none;width:14px;text-align:center}
 .al .tx{flex:1;min-width:0}
 .al .tx b{display:block;font-weight:600;font-size:12px;margin-bottom:1px}
 .al .tx span{color:var(--mut);font-size:10.5px;display:block}
-.ok-note{color:var(--green);font-size:12px;display:flex;gap:8px;align-items:center;padding:10px 0}
-.pkg{font-size:10px;color:var(--mut);margin-top:4px;line-height:1.9}
-.pkg code{background:#0b1118;border:1px solid var(--line);border-radius:3px;
-          padding:0 4px;color:var(--fg);font-size:9.5px;margin-right:3px;display:inline-block}
+.ok-note{color:var(--good);font-size:12px;display:flex;gap:8px;align-items:center;padding:10px 0}
 .btn{font:inherit;font-size:10.5px;background:#0d141c;border:1px solid var(--line);
      color:var(--fg);border-radius:6px;padding:4px 10px;cursor:pointer;position:relative;
      overflow:hidden;margin:6px 6px 0 0}
-.btn:hover{border-color:var(--blue)}
-.btn.danger:hover{border-color:var(--red)}
-.btn i{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--blue);opacity:.3}
-.btn.danger i{background:var(--red)}
+.btn:hover{border-color:var(--accent)}
+.btn.danger:hover{border-color:var(--bad)}
+.btn i{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--accent);opacity:.3}
+.btn.danger i{background:var(--bad)}
 .btn span{position:relative}
 
-.lg{display:grid;grid-template-columns:52px 62px 1fr;gap:6px;padding:4px 0;
-    font-size:10.5px;border-bottom:1px solid var(--line2);align-items:baseline}
-.lg:last-child{border-bottom:0}
-.lg .tm{color:var(--faint)}
-.lg .ty{color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.lg .ms{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
-.lg.bad .ms{color:var(--red)} .lg.warn .ms{color:var(--amber)}
-
 #stale{position:fixed;inset:0;background:rgba(8,11,17,.94);display:none;
-       align-items:center;justify-content:center;color:var(--amber);font-size:19px;z-index:9}
+       align-items:center;justify-content:center;color:var(--warn);font-size:19px;z-index:9}
 </style>
 </head>
 <body>
 <div id="app">
 
   <div id="top" class="card">
-    <div id="name">…<em id="hw">—</em></div>
-    <div class="pill"><span class="led" id="l_net"></span>internet <b id="v_net">—</b></div>
-    <div class="pill"><span class="led" id="l_ts"></span>tailnet <b id="v_ts">—</b></div>
-    <div class="pill"><span class="led" id="l_ctl"></span>headscale <b id="v_ctl">—</b></div>
-    <div class="pill">uptime <b id="v_up">—</b></div>
-    <div class="pill" id="p_boot" style="display:none"><span class="led warn"></span>reboot pending</div>
-    <div class="pill" id="p_lofi" style="display:none"><span class="led" id="l_lofi"></span>lofi <b id="v_lofi">—</b></div>
+    <div id="brand">Proxmox Virtual Environment</div>
+    <div id="pills">
+      <div class="pill"><span class="led" id="l_net"></span>internet <b id="v_net">—</b></div>
+      <div class="pill"><span class="led" id="l_ts"></span>tailnet <b id="v_ts">—</b></div>
+      <div class="pill"><span class="led" id="l_ctl"></span>headscale <b id="v_ctl">—</b></div>
+      <div class="pill">uptime <b id="v_up">—</b></div>
+      <div class="pill" id="p_boot" style="display:none"><span class="led warn"></span>reboot pending</div>
+      <div class="pill" id="p_lofi" style="display:none"><span class="led" id="l_lofi"></span>lofi <b id="v_lofi">—</b></div>
+    </div>
     <div id="when">
       <div id="clock" class="mono">--:--:--</div>
       <div id="date">—</div>
@@ -211,66 +226,75 @@ body.idle{cursor:none}
   </div>
 
   <div id="sys" class="card">
-    <div class="t">system <i id="pvever"></i></div>
+    <div class="t">system</div>
     <div class="scroll">
 
       <div class="blk">
-        <div class="bh"><span class="l">cpu</span><span class="sub2" id="cpu_model">—</span>
-          <span class="v mono"><span id="cpu_v">0.0</span><small>%</small></span></div>
-        <svg class="chart" id="c_cpu" height="52" preserveAspectRatio="none"></svg>
+        <div class="bh"><span class="l">cpu</span><span class="hw" id="cpu_hw">—</span></div>
+        <div class="big mono"><span id="cpu_v">0.0</span><small>%</small>
+          <span class="side">temp <b id="cpu_t">—</b></span></div>
+        <svg class="chart" id="c_cpu" height="50" preserveAspectRatio="none"></svg>
         <div id="cores"></div>
-        <div class="sub" id="cpu_sub"></div>
-      </div>
-
-      <div class="blk">
-        <div class="bh"><span class="l">memory</span>
-          <span class="v mono"><span id="mem_p">0</span><small>% · </small><span id="mem_v">—</span></span></div>
-        <svg class="chart" id="c_mem" height="46" preserveAspectRatio="none"></svg>
-        <div class="sub" id="mem_sub"></div>
       </div>
 
       <div class="blk" id="gpu_blk">
-        <div class="bh"><span class="l">gpu</span><span class="sub2" id="gpu_name">—</span>
-          <span class="v mono"><span id="gpu_v">0</span><small>%</small></span></div>
-        <svg class="chart" id="c_gpu" height="46" preserveAspectRatio="none"></svg>
-        <div class="sub" id="gpu_sub"></div>
-        <div class="sub" id="gpu_sub2"></div>
+        <div class="bh"><span class="l">gpu</span><span class="hw" id="gpu_hw">—</span></div>
+        <div class="big mono"><span id="gpu_v">0</span><small>%</small>
+          <span class="side">temp <b id="gpu_t">—</b></span></div>
+        <svg class="chart" id="c_gpu" height="44" preserveAspectRatio="none"></svg>
+        <div class="stats" id="gpu_stats"></div>
       </div>
 
       <div class="blk">
-        <div class="bh"><span class="l">network</span>
-          <span class="sub2">↓ down &nbsp;↑ up, per interface</span></div>
-        <div id="nets"></div>
+        <div class="bh"><span class="l">memory</span><span class="hw" id="mem_hw">—</span></div>
+        <div class="big mono"><span id="mem_v">0</span><small>%</small>
+          <span class="side"><b id="mem_used">—</b></span></div>
+        <svg class="chart" id="c_mem" height="44" preserveAspectRatio="none"></svg>
+        <div class="stats" id="mem_stats"></div>
       </div>
 
       <div class="blk">
-        <div class="bh"><span class="l">filesystems</span></div>
-        <div id="fs_rows"></div>
+        <div class="bh"><span class="l">network</span><span class="hw" id="net_hw">—</span></div>
+        <div class="net">
+          <div class="hd">download<b id="nd_v">—</b></div>
+          <svg class="chart" id="c_down" height="40" preserveAspectRatio="none"></svg>
+        </div>
+        <div class="net">
+          <div class="hd">upload<b id="nu_v">—</b></div>
+          <svg class="chart" id="c_up" height="40" preserveAspectRatio="none"></svg>
+        </div>
+        <div class="stats" id="net_stats"></div>
+      </div>
+
+      <div class="blk">
+        <div class="bh"><span class="l">storage</span></div>
+        <div id="fs_rows" style="margin-top:6px"></div>
       </div>
 
     </div>
   </div>
 
   <div id="vms" class="card">
-    <div class="t">machines <i id="vmcount"></i></div>
+    <div class="t">machines</div>
     <div id="tabs"></div>
     <div class="scroll" id="glist"></div>
   </div>
 
   <div id="tnet" class="card">
-    <div class="t">tailnet <i>— this host's links, grouped by what runs where</i></div>
+    <div class="t">tailnet</div>
     <svg id="msvg" preserveAspectRatio="xMidYMid meet"></svg>
     <div id="relays"></div>
   </div>
 
-  <div id="notif" class="card">
-    <div class="t">notifications</div>
-    <div class="scroll" id="alist"></div>
+  <div id="logs" class="card">
+    <div class="t">logs</div>
+    <div class="lgh"><span>time</span><span>source</span><span>who</span><span>what</span></div>
+    <div class="scroll" id="loglist"></div>
   </div>
 
-  <div id="logs" class="card">
-    <div class="t">logs <i>— proxmox tasks and host warnings</i></div>
-    <div class="scroll" id="loglist"></div>
+  <div id="notif" class="card">
+    <div class="t">alerts</div>
+    <div class="scroll" id="alist"></div>
   </div>
 
 </div>
@@ -278,7 +302,8 @@ body.idle{cursor:none}
 
 <script>
 const FAST={{ kiosk_fast_seconds }}*1000, SLOW={{ kiosk_guest_seconds }}*1000;
-const TAB_MS={{ kiosk_tab_seconds }}*1000, IDLE_MS={{ kiosk_idle_seconds }}*1000;
+const IDLE_MS={{ kiosk_idle_seconds }}*1000;
+const NET_MAX={{ kiosk_net_scale_bytes }}, NET_IF="{{ kiosk_net_primary }}";
 const NS="http://www.w3.org/2000/svg", $=i=>document.getElementById(i);
 const RELAY={ams:"Amsterdam",blr:"Bangalore",bom:"Mumbai",cdg:"Paris",den:"Denver",dfw:"Dallas",
  dub:"Dublin",fra:"Frankfurt",hel:"Helsinki",hkg:"Hong Kong",ist:"Istanbul",jnb:"Johannesburg",
@@ -287,13 +312,18 @@ const RELAY={ams:"Amsterdam",blr:"Bangalore",bom:"Mumbai",cdg:"Paris",den:"Denve
  sea:"Seattle",sfo:"San Francisco",sin:"Singapore",sto:"Stockholm",syd:"Sydney",tor:"Toronto",
  vie:"Vienna",waw:"Warsaw",zrh:"Zurich"};
 
-/* Panels are rebuilt wholesale on each slow tick, which would otherwise
-   yank a list back to the top while someone is reading it. */
-function keepScroll(id,fn){
-  const el=$(id),top=el.scrollTop;
-  fn();
-  el.scrollTop=top;
-}
+/* Device shapes as stroked paths on a 24×24 box. Not emoji: the only font on
+   this machine is DejaVu, which has no pictographs — an emoji renders as a
+   hollow box. */
+const ICON={
+  server :["M3 4.5h18v6H3z","M3 13.5h18v6H3z","M6.4 7.5h.2","M6.4 16.5h.2"],
+  vm     :["M2.5 5h19v14h-19z","M7.5 9h9v6h-9z"],
+  pi     :["M3 6.5h18v11H3z","M6 6.5v2.5","M8 6.5v2.5","M10 6.5v2.5","M12 6.5v2.5","M8 12h7v4H8z"],
+  laptop :["M5.5 5h13v9.5h-13z","M2.5 17.5h19l-2.5-3H5z"],
+  phone  :["M8 3h8v18H8z","M10.8 18.2h2.4"],
+  desktop:["M3 5h18v11H3z","M9 20h6","M12 16v4"],
+};
+const LOCK=["M6.5 11h11v9h-11z","M9 11V8.2a3 3 0 0 1 6 0V11"];
 
 /* ── formatting ───────────────────────────────────────────────── */
 const esc=s=>String(s??"").replace(/[<>&"]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[c]));
@@ -309,14 +339,19 @@ function rate(b){b=b||0;
 function dur(s){s=Math.floor(s||0);const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60|0;
   return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m`;}
 const pc=(u,t)=>(!t||t<=0)?0:Math.min(100,u/t*100);
-const tone=p=>p>=90?"var(--red)":p>=75?"var(--amber)":"var(--blue)";
-const hex=p=>p>=90?"#e05c5c":p>=75?"#e0a34a":"#4c9aff";
+/* Only bars change colour. Numbers stay white everywhere. */
+const bar=p=>p>=90?"var(--bad)":p>=75?"var(--warn)":"var(--accent)";
+const barHex=p=>p>=90?"#e05c5c":p>=75?"#e0a34a":"#4c9aff";
 const mk=(t,a)=>{const n=document.createElementNS(NS,t);for(const k in a)n.setAttribute(k,a[k]);return n;};
 const txt=(x,y,c,s,f)=>{const n=mk("text",{x,y,class:c});if(f)n.setAttribute("fill",f);
   n.textContent=s;return n;};
+function icon(paths,x,y,size,colour){
+  const g=mk("g",{transform:`translate(${x-size/2} ${y-size/2}) scale(${size/24})`});
+  for(const d of paths)g.append(mk("path",{d,class:"ico",stroke:colour}));
+  return g;
+}
+function keepScroll(id,fn){const el=$(id),top=el.scrollTop;fn();el.scrollTop=top;}
 
-/* Count up to the new value instead of snapping, so a glance at a moving
-   number still reads as a number. */
 const tw={};
 function num(id,to,dp=1){
   const el=$(id); if(!el)return;
@@ -326,67 +361,41 @@ function num(id,to,dp=1){
 }
 
 /* ── charts ───────────────────────────────────────────────────── */
-/* One area chart, drawn straight into an <svg> with no library. At most
-   MAXPT points are plotted — a 600-sample window at one pixel per sample
-   would be finer than the panel is wide, so it is strided down. */
+/* Every chart has a FIXED ceiling passed in — nothing auto-scales, so the
+   same height always means the same number and a flat line means quiet,
+   not "nothing since the last peak". */
 const MAXPT=190;
 function stride(a){if(a.length<=MAXPT)return a;
   const out=[],k=a.length/MAXPT;
   for(let i=0;i<MAXPT;i++)out.push(a[Math.min(a.length-1,Math.round(i*k))]);
   return out;}
 
-function chart(id,arr,col,opt={}){
+function chart(id,arr,max,colour){
   const svg=$(id); if(!svg)return;
-  const W=1000,H=Number(svg.getAttribute("height"))||46;
+  const W=1000,H=Number(svg.getAttribute("height"))||44;
   svg.setAttribute("viewBox",`0 0 ${W} ${H}`); svg.replaceChildren();
   const v=stride(arr||[]);
   if(v.length<2){svg.append(txt(8,H/2+3,"nsub","collecting…"));return;}
-  const max=opt.max!=null?opt.max:Math.max(opt.floor??10,...v);
-  const st=W/(v.length-1), y=x=>H-1.5-(Math.max(0,x)/max)*(H-3);
+  const st=W/(v.length-1);
+  /* Clipped, not rescaled: a value over the ceiling draws at the ceiling, so
+     a spike shows as a flat top instead of squashing the rest of the window
+     down to nothing. */
+  const y=n=>H-1.5-(Math.min(Math.max(n,0),max)/max)*(H-3);
   const pt=v.map((n,i)=>[i*st,y(n)]);
   const d=pt.map((p,i)=>(i?"L":"M")+p[0].toFixed(1)+" "+p[1].toFixed(1)).join("");
-  const gid=id+"_grad",gr=mk("linearGradient",{id:gid,x1:0,y1:0,x2:0,y2:1});
-  gr.append(mk("stop",{offset:"0%","stop-color":col,"stop-opacity":".34"}),
-            mk("stop",{offset:"100%","stop-color":col,"stop-opacity":"0"}));
+  const gid=id+"_g",gr=mk("linearGradient",{id:gid,x1:0,y1:0,x2:0,y2:1});
+  gr.append(mk("stop",{offset:"0%","stop-color":colour,"stop-opacity":".34"}),
+            mk("stop",{offset:"100%","stop-color":colour,"stop-opacity":"0"}));
   svg.append(gr);
-  if(opt.grid) for(const f of [.25,.5,.75])
+  for(const f of [.25,.5,.75])
     svg.append(mk("line",{x1:0,y1:H*f,x2:W,y2:H*f,stroke:"var(--line2)","stroke-width":1}));
   svg.append(mk("path",{d:`${d}L${W} ${H}L0 ${H}Z`,fill:`url(#${gid})`,stroke:"none"}),
-             mk("path",{d,fill:"none",stroke:col,"stroke-width":1.6,
+             mk("path",{d,fill:"none",stroke:colour,"stroke-width":1.6,
                         "stroke-linejoin":"round","vector-effect":"non-scaling-stroke"}),
-             mk("circle",{cx:pt.at(-1)[0],cy:pt.at(-1)[1],r:2.6,fill:col}));
-  if(opt.label)svg.append(txt(6,11,"nsub",opt.label));
-}
-
-/* Down above the line, up mirrored below it — one panel per interface
-   instead of two numbers, which is what the memory panel already did and
-   the network panel did not. */
-function netChart(id,rx,tx){
-  const svg=$(id); if(!svg)return;
-  const W=1000,H=Number(svg.getAttribute("height"))||42,mid=H/2;
-  svg.setAttribute("viewBox",`0 0 ${W} ${H}`); svg.replaceChildren();
-  const a=stride(rx||[]),b=stride(tx||[]);
-  if(a.length<2){svg.append(txt(8,mid+3,"nsub","measuring…"));return;}
-  const max=Math.max(8192,...a,...b),st=W/(a.length-1);
-  const build=(v,dir)=>v.map((n,i)=>[i*st,mid-dir*(n/max)*(mid-1.5)]);
-  for(const [v,dir,col,gidx] of [[a,1,"#4ec9a5","d"],[b,-1,"#9b8cff","u"]]){
-    const p=build(v,dir),d=p.map((q,i)=>(i?"L":"M")+q[0].toFixed(1)+" "+q[1].toFixed(1)).join("");
-    const gid=id+gidx,gr=mk("linearGradient",{id:gid,x1:0,y1:dir>0?1:0,x2:0,y2:dir>0?0:1});
-    gr.append(mk("stop",{offset:"0%","stop-color":col,"stop-opacity":"0"}),
-              mk("stop",{offset:"100%","stop-color":col,"stop-opacity":".3"}));
-    svg.append(gr,mk("path",{d:`${d}L${W} ${mid}L0 ${mid}Z`,fill:`url(#${gid})`}),
-               mk("path",{d,fill:"none",stroke:col,"stroke-width":1.4,
-                          "vector-effect":"non-scaling-stroke"}));
-  }
-  svg.append(mk("line",{x1:0,y1:mid,x2:W,y2:mid,stroke:"var(--line)","stroke-width":1}));
+             mk("circle",{cx:pt.at(-1)[0],cy:pt.at(-1)[1],r:2.6,fill:colour}));
 }
 
 /* ── series store ─────────────────────────────────────────────── */
-/* The daemon hands back only what is new since the sequence we last saw,
-   so this keeps the window. Each series carries its own starting sequence
-   because they do not all begin on the same tick — if one arrives that
-   does not continue what we hold, that series is replaced wholesale rather
-   than spliced onto the wrong offset. */
 const S={}; let lastSeq=null, KEEPN=600;
 function merge(p){
   KEEPN=p.keep||KEEPN;
@@ -402,17 +411,21 @@ function merge(p){
   lastSeq=p.seq;
 }
 const sv=k=>(S[k]?.v)||[];
+const cell=(label,value)=>`<div><span>${label}</span><b>${value}</b></div>`;
 
 /* ── fast panel ───────────────────────────────────────────────── */
 let coreCells=[];
 function renderFast(p){
   const n=p.now||{}; if(!n.mem)return;
 
+  $("cpu_hw").textContent=n.cpu_model||"";
   num("cpu_v",n.cpu||0);
-  $("cpu_model").textContent=n.cpu_model||"";
-  $("hw").textContent=[n.board,n.cpu_model].filter(Boolean).join("  ·  ");
-  $("v_up").textContent=dur(n.uptime);
-  chart("c_cpu",sv("cpu"),"#4c9aff",{max:100,grid:true});
+  /* One temperature, called what it is. k10temp on this part offers Tctl and
+     Tccd1 and nothing else; they track within a couple of degrees, and two
+     numbers nobody can name is worse than one that reads plainly. */
+  const t=(n.temps||[])[0];
+  $("cpu_t").textContent=t?t.c.toFixed(0)+"°C":"—";
+  chart("c_cpu",sv("cpu"),100,"#4c9aff");
 
   const per=n.per_core||[];
   if(coreCells.length!==per.length){
@@ -425,79 +438,59 @@ function renderFast(p){
     });
   }
   per.forEach((v,i)=>{const c=coreCells[i];
-    c.bar.style.height=v+"%"; c.bar.style.background=hex(v);
+    c.bar.style.height=v+"%"; c.bar.style.background=barHex(v);
     c.val.textContent=Math.round(v);});
-
-  /* Two temperatures, because two is what k10temp on this CPU offers.
-     Tctl is the control value the fan curve follows; Tccd1 is the die
-     sensor. Per-core temperatures do not exist on this part. */
-  const temps=(n.temps||[]).map(t=>
-    `<span>${esc(t.label)} <b>${t.c.toFixed(1)}°C</b></span>`).join("");
-  $("cpu_sub").innerHTML=
-    `<span>${n.cores||0} threads</span>`+
-    `<span>load <b>${(n.load||[]).map(x=>x.toFixed(2)).join(" ")}</b> of ${n.cores||0}</span>`+temps;
-
-  const m=n.mem,mp=pc(m.used,m.total);
-  num("mem_p",mp,0);
-  $("mem_v").innerHTML=`${bytes(m.used)}<small> / ${bytes(m.total)}</small>`;
-  chart("c_mem",sv("mem"),"#9b8cff",{max:100,grid:true});
-  $("mem_sub").innerHTML=
-    `<span>available <b>${bytes(m.available)}</b></span>`+
-    `<span>cache <b>${bytes(m.cached)}</b></span>`+
-    (m.swap_total?`<span>swap <b>${bytes(m.swap_used)} / ${bytes(m.swap_total)}</b></span>`:"");
 
   const g=n.gpu;
   $("gpu_blk").style.display=g?"":"none";
   if(g){
+    $("gpu_hw").textContent=g.name||"";
     num("gpu_v",g.busy||0,0);
-    $("gpu_name").textContent=`${g.name}${g.driver?" · "+g.driver:""}`;
-    chart("c_gpu",sv("gpu"),"#48c4d8",{max:100,grid:true});
-    const vp=pc(g.vram_used,g.vram_total);
-    $("gpu_sub").innerHTML=
-      `<span>vram <b>${vp.toFixed(0)}%</b> · ${bytes(g.vram_used)} / ${bytes(g.vram_total)}</span>`+
-      `<span>mem bus <b>${g.mem_busy}%</b></span>`;
-    $("gpu_sub2").innerHTML=
-      `<span>temp <b>${g.temp.toFixed(1)}°C</b></span>`+
-      `<span>fan <b>${g.fan_rpm} rpm</b></span>`+
-      `<span>power <b>${g.watts} W</b></span>`+
-      `<span>core <b>${g.sclk} MHz</b></span>`+
-      `<span>mem <b>${g.mclk} MHz</b></span>`;
+    $("gpu_t").textContent=g.temp.toFixed(0)+"°C";
+    chart("c_gpu",sv("gpu"),100,"#4c9aff");
+    $("gpu_stats").innerHTML=
+      cell("vram",`${pc(g.vram_used,g.vram_total).toFixed(0)}%`)+
+      cell("power",`${g.watts.toFixed(0)} W`)+
+      cell("fan",`${g.fan_rpm} rpm`)+
+      cell("clock",`${g.sclk} MHz`);
   }
 
-  /* vmbr0 and tailscale0 are not the same bytes twice by accident — one
-     is the bridge every guest sits on, the other the tunnel, and the
-     tunnel's traffic is counted again on the bridge once encrypted. */
-  const NOTE={vmbr:"LAN bridge — all guest and host traffic",
-              tailscale:"WireGuard tunnel — a subset of the bridge, before encryption",
-              tap:"one guest's virtual NIC"};
-  const names=Object.keys(n.net||{}).sort();
-  const host=$("nets");
-  if(host.dataset.keys!==names.join()){
-    host.dataset.keys=names.join();
-    host.innerHTML=names.map(i=>{
-      const note=NOTE[i.replace(/\d+$/,"").replace(/i\d+$/,"")]||"";
-      return `<div style="margin-bottom:7px">
-        <div class="bh"><span class="l" style="letter-spacing:.06em">${esc(i)}</span>
-          <span class="sub2">${esc(note)}</span>
-          <span class="v mono" style="font-size:11px">
-            <span id="nr_${i}" style="color:var(--green)">—</span>
-            <span id="nt_${i}" style="color:var(--violet)"> —</span></span></div>
-        <svg class="chart" id="nc_${i}" height="34" preserveAspectRatio="none"></svg>
-        <div class="sub" style="margin-top:1px"><span id="nx_${i}"></span></div></div>`;
-    }).join("");
-  }
-  for(const i of names){
-    const r=n.net[i];
-    $("nr_"+i).textContent="↓ "+rate(r.rx);
-    $("nt_"+i).textContent=" ↑ "+rate(r.tx);
-    $("nx_"+i).innerHTML=`since boot <b>${bytes(r.total_rx)}</b> down · <b>${bytes(r.total_tx)}</b> up`;
-    netChart("nc_"+i,sv("rx_"+i),sv("tx_"+i));
-  }
+  const m=n.mem,mp=pc(m.used,m.total);
+  $("mem_hw").textContent=bytes(m.total)+" total";
+  num("mem_v",mp,0);
+  $("mem_used").textContent=bytes(m.used);
+  chart("c_mem",sv("mem"),100,"#4c9aff");
+  $("mem_stats").innerHTML=
+    cell("free",bytes(m.available))+
+    cell("cache",bytes(m.cached))+
+    cell("swap",m.swap_total?`${pc(m.swap_used,m.swap_total).toFixed(0)}%`:"off")+
+    cell("used",bytes(m.used));
+
+  /* One interface, two graphs. vmbr0 is the bridge everything on this box
+     sits on. tailscale0 is not a second network — a byte in the tunnel is
+     counted again on the bridge once encrypted — so it is a figure, not a
+     second graph drawing the same traffic twice. */
+  const nets=n.net||{}, prim=nets[NET_IF]||{rx:0,tx:0,total_rx:0,total_tx:0};
+  const ts=nets["tailscale0"];
+  $("net_hw").textContent=NET_IF+" · full scale "+rate(NET_MAX);
+  $("nd_v").textContent=rate(prim.rx);
+  $("nu_v").textContent=rate(prim.tx);
+  chart("c_down",sv("rx_"+NET_IF),NET_MAX,"#4c9aff");
+  chart("c_up",sv("tx_"+NET_IF),NET_MAX,"#4c9aff");
+  $("net_stats").innerHTML=
+    cell("total down",bytes(prim.total_rx))+
+    cell("total up",bytes(prim.total_tx))+
+    cell("tunnel down",ts?rate(ts.rx):"—")+
+    cell("tunnel up",ts?rate(ts.tx):"—");
+
+  $("v_up").textContent=dur(n.uptime);
 }
 
 /* ── guests ───────────────────────────────────────────────────── */
-const GROUPS=[["automated","automated"],["template","templates"],["manual","manual"]];
-let tab="automated", tabTouched=0, guests=[];
+/* Fixed order, fixed selection. No rotation: a screen that changes on its
+   own is one you can never look away from and come back to. */
+const GROUPS=[["automated","automated"],["manual","manual"],["template","templates"]];
+let tab="automated", guests=[];
 
 function renderTabs(){
   const counts={};
@@ -505,52 +498,46 @@ function renderTabs(){
   $("tabs").replaceChildren(...GROUPS.map(([k,label])=>{
     const b=document.createElement("button");
     b.className="tab"+(k===tab?" on":"")+(counts[k]?"":" empty");
-    b.innerHTML=`${label}<b>${counts[k]}</b><i class="rot"></i>`;
-    b.onclick=()=>{tab=k;tabTouched=Date.now();renderTabs();renderGuests();};
+    b.innerHTML=`${label}<b>${counts[k]}</b>`;
+    b.onclick=()=>{tab=k;renderTabs();renderGuests();};
     return b;
   }));
-  const bar=$("tabs").querySelector(".tab.on .rot");
-  if(bar&&rotating()){bar.classList.add("run");bar.style.animationDuration=TAB_MS+"ms";}
 }
 
 function guestCard(g){
-  const on=g.running, m=g.memory||{}, mp=pc(m.used,m.total);
-  const alloc=g.alloc||{};
+  const on=g.running, m=g.memory||{}, mp=pc(m.used,m.total), a=g.alloc||{};
   const fs=(g.fs||[]).filter(f=>f.mount==="/")[0]||(g.fs||[])[0];
   const dp=fs?pc(fs.used,fs.total):0;
+  /* A dot and a name. A container that never declared a healthcheck is not
+     unhealthy, so it must not carry a mark that a healthy one does. */
   const ctrs=(g.containers||[]).map(c=>{
-    const col=c.state==="running"?(c.unhealthy?"var(--red)":"var(--green)"):"var(--faint)";
-    return `<span class="ctr"><span class="led" style="background:${col}"></span>
-      <b>${esc(c.name)}</b>${c.healthy?" ✓":c.unhealthy?" ✕":""}</span>`;
+    const col=c.state!=="running"?"var(--dim)":c.warn?"var(--warn)":"var(--good)";
+    return `<span class="ctr"><span class="led" style="background:${col}"></span>${esc(c.name)}</span>`;
   }).join("");
-  return `<div class="g${on?"":" off"}" data-vmid="${g.vmid}">
+  return `<div class="g${on?"":" off"}">
     <div class="gh"><span class="led ${on?"ok":""}"></span>
       <span class="n">${esc(g.name)}</span>
       <span class="tag">${g.kind} ${g.vmid}</span>
       ${g.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}
       <span class="up">${on?dur(g.uptime):esc(g.status)}</span></div>
     <div class="gdns">${esc(g.dns||"—")}</div>
-    <div class="galloc">
-      <span>allocated <b>${alloc.cores} vcpu · ${bytes(alloc.memory)} ram · ${bytes(alloc.disk)} disk</b></span>
-    </div>`+
+    <div class="galloc">allocated ${a.cores} vcpu · ${bytes(a.memory)} ram · ${bytes(a.disk)} disk</div>`+
     (on?`<div class="gm">
       <span>cpu</span><svg class="gc" id="gc_${g.vmid}_c" height="26" preserveAspectRatio="none"></svg>
-        <span class="val mono">${g.cpu.toFixed(1)}% <s>of ${alloc.cores}</s></span>
+        <span class="val">${g.cpu.toFixed(1)}% <s>of ${a.cores}</s></span>
       <span>ram</span><svg class="gc" id="gc_${g.vmid}_m" height="26" preserveAspectRatio="none"></svg>
-        <span class="val mono">${mp.toFixed(0)}% <s>${bytes(m.used)} / ${bytes(m.total||alloc.memory)}</s></span>
-      ${fs?`<span>disk</span><div class="trk" style="width:100%"><i style="width:${dp}%;background:${tone(dp)}"></i></div>
-        <span class="val mono">${dp.toFixed(0)}% <s>${bytes(fs.used)} / ${bytes(fs.total)}</s></span>`:""}
+        <span class="val">${mp.toFixed(0)}% <s>${bytes(m.used)} / ${bytes(m.total||a.memory)}</s></span>
+      ${fs?`<span>disk</span><div class="trk" style="width:100%"><i style="width:${dp}%;background:${bar(dp)}"></i></div>
+        <span class="val">${dp.toFixed(0)}% <s>${bytes(fs.used)} / ${bytes(fs.total)}</s></span>`:""}
       </div>
-      ${m.source==="host-rss"?`<div class="gdns" style="color:var(--amber);margin-top:5px">
+      ${m.source==="host-rss"?`<div class="gdns" style="color:var(--warn);margin-top:5px">
          no balloon driver — showing the QEMU process's host memory, which overstates the guest</div>`:""}
-      ${ctrs?`<div class="ctrs">${ctrs}</div>`:
-        (g.kind==="vm"?`<div class="gdns" style="margin-top:6px">no containers reported</div>`:"")}`
+      ${ctrs?`<div class="ctrs">${ctrs}</div>`:""}`
     :"")+`</div>`;
 }
 
 function renderGuests(){
   const rows=guests.filter(g=>g.group===tab);
-  $("vmcount").textContent=`— ${guests.length} total`;
   if(!rows.length){
     $("glist").innerHTML=`<div class="empty-note">no machines in this group</div>`;
     return;
@@ -558,27 +545,12 @@ function renderGuests(){
   keepScroll("glist",()=>{$("glist").innerHTML=rows.map(guestCard).join("");});
   for(const g of rows){
     if(!g.running||!g.hist)continue;
-    chart(`gc_${g.vmid}_c`,g.hist.cpu,"#4c9aff",{max:100});
-    chart(`gc_${g.vmid}_m`,g.hist.mem,"#9b8cff",{max:100});
+    chart(`gc_${g.vmid}_c`,g.hist.cpu,100,"#4c9aff");
+    chart(`gc_${g.vmid}_m`,g.hist.mem,100,"#4c9aff");
   }
 }
 
-/* Rotate only while nobody is touching anything, and only between tabs
-   that have something to show — flicking to an empty list is not a view. */
-const rotating=()=>Date.now()-Math.max(tabTouched,lastInput)>IDLE_MS;
-setInterval(()=>{
-  if(!rotating())return;
-  const live=GROUPS.map(([k])=>k).filter(k=>guests.some(g=>g.group===k));
-  if(live.length<2)return;
-  tab=live[(live.indexOf(tab)+1)%live.length];
-  renderTabs(); renderGuests();
-},TAB_MS);
-
 /* ── tailnet graph ────────────────────────────────────────────── */
-/* A small spring layout rather than a fixed ring: nodes repel, edges pull,
-   and a guest is pulled hard toward the hypervisor it runs on so the group
-   ends up drawn together. Settled once per update and then left alone —
-   a hypervisor should not be running a physics loop at 60fps. */
 const POS={};
 function layout(nodes,W,H){
   const cx=W/2,cy=H/2;
@@ -600,17 +572,15 @@ function layout(nodes,W,H){
         const rep=(a.parent&&a.parent===b.parent)?9000:22000;
         fx+=dx/d2*rep; fy+=dy/d2*rep;
       }
-      // Every peer is tethered to this host, because this host is the only
-      // thing that can observe a link at all.
       const anchor=a.parent?nodes.find(n=>n.name===a.parent)||self:self;
-      const want=a.parent?78:Math.min(W,H)*0.31;
+      const want=a.parent?82:Math.min(W,H)*0.31;
       let dx=anchor.x-a.x,dy=anchor.y-a.y,d=Math.hypot(dx,dy)||1;
       const k=(d-want)*0.06;
       fx+=dx/d*k*d*0.14; fy+=dy/d*k*d*0.14;
       a.x+=Math.max(-14,Math.min(14,fx*0.02));
       a.y+=Math.max(-14,Math.min(14,fy*0.02));
-      a.x=Math.max(78,Math.min(W-78,a.x));
-      a.y=Math.max(34,Math.min(H-40,a.y));
+      a.x=Math.max(88,Math.min(W-88,a.x));
+      a.y=Math.max(36,Math.min(H-46,a.y));
     }
   }
   nodes.forEach(n=>POS[n.id]={x:n.x,y:n.y});
@@ -626,12 +596,11 @@ function drawTailnet(tn){
   layout(nodes,W,H);
   const self=nodes.find(n=>n.self)||nodes[0];
 
-  // group hull: the hypervisor and everything running on it
   const kids=nodes.filter(n=>n.parent);
   if(kids.length){
-    const g=[self,...kids];
-    const x0=Math.min(...g.map(n=>n.x))-46,x1=Math.max(...g.map(n=>n.x))+46;
-    const y0=Math.min(...g.map(n=>n.y))-32,y1=Math.max(...g.map(n=>n.y))+42;
+    const grp=[self,...kids];
+    const x0=Math.min(...grp.map(n=>n.x))-50,x1=Math.max(...grp.map(n=>n.x))+50;
+    const y0=Math.min(...grp.map(n=>n.y))-34,y1=Math.max(...grp.map(n=>n.y))+48;
     svg.append(mk("rect",{x:x0,y:y0,width:x1-x0,height:y1-y0,rx:14,class:"hull"}));
     svg.append(txt(x0+9,y0+13,"hull-l",`ON ${self.name.toUpperCase()}`));
   }
@@ -643,38 +612,36 @@ function drawTailnet(tn){
   }
 
   for(const n of nodes){
-    const col=n.self?"var(--blue)":n.link==="direct"?"var(--green)"
-             :n.link==="relay"?"var(--amber)":"var(--faint)";
-    const r=n.self?15:11;
+    const col=n.self?"var(--accent)":n.link==="direct"?"var(--good)"
+             :n.link==="relay"?"var(--warn)":"var(--dim)";
+    const r=n.self?18:15;
     svg.append(mk("circle",{cx:n.x,cy:n.y,r,fill:"var(--card)",stroke:col,"stroke-width":2}));
-    /* Reachable HTTPS front door. Two letters rather than a padlock
-       glyph: the only font on this box is DejaVu, which has no emoji. */
-    if(n.https&&n.https.https)
-      svg.append(txt(n.x+r+2,n.y-r+4,"nlink","TLS",
-        n.https.valid?"var(--green)":"var(--amber)"));
+    svg.append(icon(ICON[n.kind]||ICON.desktop,n.x,n.y,r*1.15,col));
 
-    /* Label under the node on an opaque plate. The old graph wrote names
-       straight over the edges, which is what made them unreadable. */
     const link=n.self?"this host":n.link==="direct"?"direct"
               :n.link==="relay"?"via "+n.relay:"offline";
-    const w=Math.max(n.name.length,n.ip.length,link.length+8)*5.6+16;
+    const secure=!!(n.https&&n.https.https);
+    /* The lock sits beside the name it describes. In the node's corner it
+       read as a badge on the machine rather than a fact about reaching it. */
+    const w=Math.max(n.name.length*6.4+(secure?22:0),n.ip.length*5.6,link.length*5.6)+22;
     const y=n.y+r+6;
-    svg.append(mk("rect",{x:n.x-w/2,y,width:w,height:34,class:"lblbg"}));
-    const t1=txt(n.x,y+12,"nlbl",n.name);t1.setAttribute("text-anchor","middle");
-    const t2=txt(n.x,y+22,"nsub",n.ip);t2.setAttribute("text-anchor","middle");
-    const t3=txt(n.x,y+31,"nlink",link,col);t3.setAttribute("text-anchor","middle");
+    svg.append(mk("rect",{x:n.x-w/2,y,width:w,height:34,rx:4,class:"lblbg"}));
+    if(secure)
+      svg.append(icon(LOCK,n.x-w/2+12,y+11,11,n.https.valid?"var(--good)":"var(--warn)"));
+    const t1=txt(secure?n.x+8:n.x,y+14,"nlbl",n.name);t1.setAttribute("text-anchor","middle");
+    const t2=txt(n.x,y+23,"nsub",n.ip);t2.setAttribute("text-anchor","middle");
+    const t3=txt(n.x,y+32,"nlink",link,col);t3.setAttribute("text-anchor","middle");
     svg.append(t1,t2,t3);
   }
 
   const rl=(tn.relays||[]).map(r=>`<b>${esc(r)}</b> ${esc(RELAY[r]||"")}`).join(" · ");
   const certs=nodes.filter(n=>n.https&&n.https.https&&n.https.days!=null)
     .map(n=>`${esc(n.name)} ${n.https.days}d`).join(" · ");
-  $("relays").innerHTML=
-    (rl?`relays in use: ${rl}`:"all links direct")+
+  $("relays").innerHTML=(rl?`relays: ${rl}`:"all links direct")+
     (certs?` &nbsp;·&nbsp; certs: ${certs}`:"");
 }
 
-/* ── notifications, logs, actions ─────────────────────────────── */
+/* ── alerts, logs, actions ────────────────────────────────────── */
 let holdT=null;
 function holdBtn(label,cls,action,note){
   return `<button class="btn ${cls}" data-act="${action}" title="${esc(note||"")}">
@@ -682,10 +649,8 @@ function holdBtn(label,cls,action,note){
 }
 document.addEventListener("pointerdown",e=>{
   const b=e.target.closest(".btn[data-act]"); if(!b)return;
-  const bar=b.querySelector("i");
-  bar.style.transition="width 1.4s linear"; bar.style.width="100%";
-  // Hold, not click: the buttons on this panel reboot a hypervisor, and
-  // the realistic accident is a sleeve on the mouse, not an attacker.
+  const fill=b.querySelector("i");
+  fill.style.transition="width 1.4s linear"; fill.style.width="100%";
   holdT=setTimeout(async()=>{
     b.querySelector("span").textContent="working…";
     await fetch("/api/do",{method:"POST",headers:{"X-Kiosk":"1","Content-Type":"application/json"},
@@ -693,7 +658,7 @@ document.addEventListener("pointerdown",e=>{
     slowTick();
   },1400);
 });
-function cancelHold(e){
+function cancelHold(){
   clearTimeout(holdT);
   document.querySelectorAll(".btn i").forEach(i=>{i.style.transition="width .2s";i.style.width="0"});
 }
@@ -702,87 +667,81 @@ document.addEventListener("pointerleave",cancelHold);
 
 function renderAlerts(d){
   const A=[];
-  const add=(ic,col,title,sub,extra)=>A.push({ic,col,title,sub,extra});
+  const add=(ic,col,title,sub)=>A.push({ic,col,title,sub});
 
-  if(d.internet===false)
-    add("✕","var(--red)","No internet","this host can't reach the outside network");
+  if(d.internet===false)add("✕","var(--bad)","No internet","can't reach the outside network");
   if(d.control&&!d.control.online)
-    add("!","var(--amber)","Coordination server unreachable",
-      "new devices can't join and keys can't refresh — existing links keep working");
+    add("!","var(--warn)","Coordination server down","existing links keep working");
   if(d.tailnet&&d.tailnet.ok===false)
-    add("!","var(--red)","Tailnet "+esc(d.tailnet.state||"down"),"this host is off the tailnet");
+    add("!","var(--bad)","Tailnet "+esc(d.tailnet.state||"down"),"this host is off the tailnet");
 
   (d.fs||[]).forEach(f=>{const p=pc(f.used,f.total);
-    if(p>=85)add(p>=93?"✕":"!",p>=93?"var(--red)":"var(--amber)",
-      `${f.mount} is ${p.toFixed(0)}% full`,`${bytes(f.total-f.used)} left`);});
+    if(p>=85)add(p>=93?"✕":"!",p>=93?"var(--bad)":"var(--warn)",
+      `${f.mount} ${p.toFixed(0)}% full`,`${bytes(f.total-f.used)} left`);});
 
-  (d.failed||[]).forEach(u=>add("✕","var(--red)","Failed unit",esc(u)));
+  (d.failed||[]).forEach(u=>add("✕","var(--bad)","Failed unit",esc(u)));
 
   (d.guests||[]).forEach(g=>{
     (g.containers||[]).forEach(c=>{
-      if(c.unhealthy)add("✕","var(--red)",`${esc(c.name)} is unhealthy`,`on ${esc(g.name)}`);
-      else if(c.state!=="running")add("!","var(--amber)",`${esc(c.name)} is ${esc(c.state)}`,
-        `on ${esc(g.name)} — ${esc(c.status)}`);
+      if(c.state!=="running")add("!","var(--warn)",`${esc(c.name)} ${esc(c.state)}`,`on ${esc(g.name)}`);
+      else if(c.warn)add("!","var(--warn)",`${esc(c.name)} ${esc(c.health)}`,`on ${esc(g.name)}`);
     });
   });
 
   (d.tailnet?.nodes||[]).forEach(n=>{
     if(n.https&&n.https.https&&n.https.days!=null&&n.https.days<21)
-      add("!","var(--amber)",`${esc(n.name)} certificate expires in ${n.https.days} days`,
-        esc(n.https.issuer||""));
+      add("!","var(--warn)",`${esc(n.name)} cert expires in ${n.https.days}d`,"");
   });
-
-  /* Relayed peers are deliberately NOT in here. A relayed link is slower,
-     not broken, and a permanent line on a list headed "notifications"
-     teaches you to stop reading the list. It is on the graph instead. */
 
   const ups=d.updates||[];
   const sec=ups.filter(u=>u.security), reb=ups.filter(u=>u.needs_reboot);
-  const pve=ups.filter(u=>u.pve&&!u.needs_reboot);
-  const rest=ups.filter(u=>!u.security&&!u.needs_reboot&&!u.pve);
+  const rest=ups.filter(u=>!u.security&&!u.needs_reboot);
 
   let html=A.map(a=>`<div class="al"><span class="ic" style="color:${a.col}">${a.ic}</span>
     <span class="tx"><b>${a.title}</b><span>${a.sub||""}</span></span></div>`).join("");
 
-  if(sec.length)html+=`<div class="al"><span class="ic" style="color:var(--green)">↑</span>
+  if(sec.length)html+=`<div class="al"><span class="ic" style="color:var(--good)">↑</span>
     <span class="tx"><b>${sec.length} security update${sec.length>1?"s":""}</b>
-    <span>taken automatically tonight — nothing to do</span>
-    <div class="pkg">${sec.map(u=>`<code>${esc(u.name)}</code>`).join("")}</div></span></div>`;
+    <span>taken automatically tonight</span></span></div>`;
 
-  if(pve.length||rest.length)html+=`<div class="al"><span class="ic" style="color:var(--amber)">↑</span>
-    <span class="tx"><b>${pve.length+rest.length} update${pve.length+rest.length>1?"s":""} waiting for you</b>
-    <span>held back from the nightly run — Proxmox and non-security packages</span>
-    <div class="pkg">${[...pve,...rest].slice(0,24).map(u=>`<code>${esc(u.name)}</code>`).join("")}</div>
+  if(rest.length)html+=`<div class="al"><span class="ic" style="color:var(--warn)">↑</span>
+    <span class="tx"><b>${rest.length} update${rest.length>1?"s":""} waiting</b>
+    <span>held back from the nightly run</span>
     ${holdBtn("hold to install","","upgrade","runs apt-get dist-upgrade")}</span></div>`;
 
-  if(reb.length)html+=`<div class="al"><span class="ic" style="color:var(--amber)">⟳</span>
+  if(reb.length)html+=`<div class="al"><span class="ic" style="color:var(--warn)">⟳</span>
     <span class="tx"><b>${reb.length} kernel update${reb.length>1?"s":""}</b>
-    <span>a new kernel only takes effect after a reboot</span>
-    <div class="pkg">${reb.map(u=>`<code>${esc(u.name)}</code>`).join("")}</div></span></div>`;
+    <span>only takes effect after a reboot</span></span></div>`;
 
-  if(d.reboot_required)html+=`<div class="al"><span class="ic" style="color:var(--amber)">⟳</span>
+  if(d.reboot_required)html+=`<div class="al"><span class="ic" style="color:var(--warn)">⟳</span>
     <span class="tx"><b>Reboot pending</b>
-    <span>${(d.reboot_pkgs||[]).length} package${(d.reboot_pkgs||[]).length===1?" needs":"s need"} it — every guest goes down with the host</span>
+    <span>every guest goes down with the host</span>
     ${holdBtn("hold to reboot","danger","reboot","reboots this hypervisor")}</span></div>`;
 
   (d.actions||[]).forEach(a=>html+=`<div class="al">
-    <span class="ic" style="color:${a.ok?"var(--green)":"var(--red)"}">${a.ok?"✓":"✕"}</span>
+    <span class="ic" style="color:${a.ok?"var(--good)":"var(--bad)"}">${a.ok?"✓":"✕"}</span>
     <span class="tx"><b>${esc(a.name)} ${a.ok?"finished":"failed"}</b>
     <span>${esc(new Date(a.t*1000).toLocaleTimeString([],{hour12:false}))}</span></span></div>`);
 
   keepScroll("alist",()=>{
-    $("alist").innerHTML=html||`<div class="ok-note"><span>✓</span> everything is healthy</div>`;});
+    $("alist").innerHTML=html||`<div class="ok-note"><span>✓</span> all healthy</div>`;});
 }
 
 function renderLogs(d){
   const rows=(d.logs||[]).map(l=>{
     const when=new Date(l.t*1000).toLocaleTimeString([],{hour12:false,hour:"2-digit",minute:"2-digit"});
-    const cls=l.source==="journal"?(l.status==="err"?"bad":"warn"):(l.ok?"":"bad");
-    const what=l.source==="pve"
-      ? `${esc(l.type)}${l.id?" "+esc(l.id):""} — ${esc(l.status||"running")}${l.user?" · "+esc(l.user):""}`
-      : esc(l.msg||"")+(l.count>1?` <span style="color:var(--faint)">×${l.count}</span>`:"");
-    return `<div class="lg ${cls}"><span class="tm mono">${when}</span>
-      <span class="ty">${esc(l.source==="pve"?"proxmox":l.type)}</span>
+    const isPve=l.source==="pve";
+    const cls=isPve?(l.ok?"":"bad"):(l.status==="err"?"bad":"warn");
+    /* WHO answers "what caused this". A Proxmox task carries a real account;
+       a kernel or service warning has no user at all, so the daemon that
+       emitted it is the honest answer rather than an empty cell. */
+    const who=isPve?(l.user||"—"):(l.type||"kernel");
+    const what=isPve
+      ? `${esc(l.type)}${l.id?" "+esc(l.id):""} — ${esc(l.status||"running")}`
+      : esc(l.msg||"")+(l.count>1?` <span style="color:var(--dim)">×${l.count}</span>`:"");
+    return `<div class="lg ${cls}"><span class="tm">${when}</span>
+      <span class="src">${isPve?"proxmox":"system"}</span>
+      <span class="who">${esc(who)}</span>
       <span class="ms">${what}</span></div>`;
   }).join("");
   keepScroll("loglist",()=>{
@@ -791,9 +750,6 @@ function renderLogs(d){
 
 /* ── slow panel ───────────────────────────────────────────────── */
 function renderSlow(d){
-  $("name").firstChild.textContent=(d.node||"?")+" ";
-  $("pvever").textContent=d.pve_version||"";
-
   guests=(d.guests||[]).map(g=>({...g,
     dns:(d.tailnet?.nodes||[]).find(n=>n.name.toLowerCase()===g.name.toLowerCase())?.dns||""}));
   renderTabs(); renderGuests();
@@ -802,10 +758,10 @@ function renderSlow(d){
     const p=pc(f.used,f.total);
     return `<div class="fs">
       <div class="r1"><b>${esc(f.mount)}</b><span class="ty">${esc(f.type)}</span>
-        <span class="pc mono" style="color:${tone(p)}">${p.toFixed(0)}%</span></div>
-      <div class="trk"><i style="width:${p}%;background:${tone(p)}"></i></div>
+        <span class="pc mono">${p.toFixed(0)}%</span></div>
+      <div class="trk"><i style="width:${p}%;background:${bar(p)}"></i></div>
       <div class="r2"><span>${bytes(f.used)} used</span><span>${bytes(f.total-f.used)} free</span>
-        <span>of ${bytes(f.total)}</span><span class="dev">${esc(f.device)}</span></div></div>`;
+        <span class="dev">${esc(f.device)}</span></div></div>`;
   }).join("")||`<div class="empty-note">no filesystems</div>`;
 
   drawTailnet(d.tailnet);
@@ -824,7 +780,7 @@ function renderSlow(d){
   $("p_lofi").style.display=lo.configured?"":"none";
   if(lo.configured){
     $("l_lofi").className="led "+(lo.playing?"ok":"");
-    $("v_lofi").textContent=lo.playing?(lo.now||"playing"):`${lo.start}`;
+    $("v_lofi").textContent=lo.playing?(lo.now||"playing"):lo.start;
     $("p_lofi").classList.add("act");
     $("p_lofi").onclick=()=>fetch("/api/do",{method:"POST",
       headers:{"X-Kiosk":"1","Content-Type":"application/json"},
@@ -856,10 +812,8 @@ fastTick(); slowTick();
 function clock(){
   const n=new Date();
   $("clock").textContent=n.toLocaleTimeString([],{hour12:false});
-  // Spelled out and full size. The old page rendered this at 10.5px, which
-  // is unreadable from anywhere except directly in front of the monitor.
-  $("date").innerHTML=n.toLocaleDateString([],{weekday:"long"})+
-    ` <small>${n.toLocaleDateString([],{day:"numeric",month:"long",year:"numeric"})}</small>`;
+  $("date").innerHTML=`<b>${n.toLocaleDateString([],{weekday:"long"})}</b> `+
+    n.toLocaleDateString([],{day:"numeric",month:"long",year:"numeric"});
 }
 setInterval(clock,1000); clock();
 
@@ -867,19 +821,15 @@ let lastInput=Date.now();
 for(const ev of ["pointermove","pointerdown","keydown","wheel"])
   window.addEventListener(ev,()=>{lastInput=Date.now();document.body.classList.remove("idle");},
     {passive:true});
-setInterval(()=>{
-  if(Date.now()-lastInput>IDLE_MS)document.body.classList.add("idle");
-},1000);
+setInterval(()=>{if(Date.now()-lastInput>IDLE_MS)document.body.classList.add("idle");},1000);
 
-/* Keyboard, because there is one plugged in: 1/2/3 pick a tab, arrows
-   step through them, r forces a refresh. */
 window.addEventListener("keydown",e=>{
   const keys=GROUPS.map(([k])=>k);
-  if("123".includes(e.key)){tab=keys[+e.key-1];tabTouched=Date.now();renderTabs();renderGuests();}
+  if("123".includes(e.key)){tab=keys[+e.key-1];renderTabs();renderGuests();}
   if(e.key==="ArrowRight"||e.key==="ArrowLeft"){
     const d=e.key==="ArrowRight"?1:-1;
     tab=keys[(keys.indexOf(tab)+d+keys.length)%keys.length];
-    tabTouched=Date.now();renderTabs();renderGuests();
+    renderTabs();renderGuests();
   }
   if(e.key==="r"){fastTick();slowTick();}
 });
