@@ -1,0 +1,24 @@
+# Managed by Ansible (pve_kiosk) — edits will be overwritten
+#
+# Started by kiosk-lofi.timer at {{ kiosk_lofi_start }}, stopped by
+# kiosk-lofi-stop.timer at {{ kiosk_lofi_stop }}, and startable by hand
+# from the dashboard's header pill.
+[Unit]
+Description=Lofi stream, audio only, volume ramped from silence
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={{ kiosk_dir }}/lofi.sh
+# The script traps TERM and kills its mpv child; without KillMode=mixed
+# systemd's own cleanup can outrun that and leave the audio device held.
+KillMode=mixed
+TimeoutStopSec=10
+# A stream that drops at 2am should come back, not stay silent until
+# tomorrow. But not if it is failing immediately — that is a broken
+# yt-dlp, and retrying it every second all night helps nobody.
+Restart=on-failure
+RestartSec=60
+StartLimitBurst=5
+StartLimitIntervalSec=600

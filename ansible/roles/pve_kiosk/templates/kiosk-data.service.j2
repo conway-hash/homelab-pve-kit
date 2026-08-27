@@ -1,9 +1,0 @@
-# Managed by Ansible (pve_kiosk) — edits will be overwritten
-[Unit]
-Description=Collect kiosk dashboard data
-After=pve-cluster.service
-Wants=pve-cluster.service
-
-[Service]
-Type=oneshot
-ExecStart={{ kiosk_dir }}/collect.sh

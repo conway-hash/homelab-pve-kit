@@ -17,15 +17,15 @@
   ],
   "customManagers": [
     {
-      "description": "Container image versions pinned as Ansible vars. Renovate's native managers cannot see these — the versions are consumed by templated compose and Dockerfile .j2 files, so the only place a version string actually exists is the group_vars file that declares it. Per this repo's rule that a var has exactly one declaration point, that is where this points; if a var's home ever moves, this pattern moves with it in the same change or it silently stops tracking.",
+      "description": "Versions pinned as Ansible vars — container images, and anything else with no native manager. Renovate's native managers cannot see these — the versions are consumed by templated compose and Dockerfile .j2 files, so the only place a version string actually exists is the group_vars file that declares it. Per this repo's rule that a var has exactly one declaration point, that is where this points; if a var's home ever moves, this pattern moves with it in the same change or it silently stops tracking.",
       "customType": "regex",
       "managerFilePatterns": [
         "/^ansible/group_vars/.+/vars\\.yml$/"
       ],
       "matchStrings": [
-        "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>\\S+)\\s*\\n\\s*[a-z_]+:\\s*[\"']?(?<currentValue>[^\"'\\s#]+)[\"']?"
+        "#\\s*renovate:\\s*datasource=(?<datasource>[a-z-]+)\\s+depName=(?<depName>\\S+)(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*[a-z_]+:\\s*[\"']?(?<currentValue>[^\"'\\s#]+)[\"']?"
       ],
-      "versioningTemplate": "docker"
+      "versioningTemplate": "{{#if versioning}}{{{versioning}}}{{else}}docker{{/if}}"
     }
   ]
 }

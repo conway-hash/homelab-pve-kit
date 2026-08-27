@@ -22,6 +22,9 @@ Three things read that file, and nothing holds a second copy of it:
 | Service | Flag | Runs on | Setup |
 |---|---|---|---|
 | Kiosk dashboard | `kiosk` | the hypervisor | [kiosk.md](kiosk.md) |
+
+Not a service, but it lives here: [updates.md](updates.md) — what patches
+itself, what waits for your approval, and what to do when a reboot goes wrong.
 | Vaultwarden | `vault` | its own guest, VM 101 | [vault.md](vault.md) |
 
 The hypervisor itself — `pve_repos`, `tailscale`, `pve_host` — has no switch.

@@ -1,0 +1,31 @@
+# Managed by Ansible (pve_kiosk) — edits will be overwritten
+#
+# One unit where there used to be three: a oneshot collector, its timer,
+# and python3 -m http.server. The daemon samples and serves in the same
+# process because the history the graphs draw lives in its memory — split
+# them and the server has nothing to serve but the newest snapshot, which
+# is the arrangement this replaced.
+[Unit]
+Description=Kiosk dashboard: sampler and local web server
+# pvesh talks to pmxcfs, so the guest panel is empty until this is up.
+After=pve-cluster.service network.target
+Wants=pve-cluster.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 {{ kiosk_dir }}/kioskd.py
+Restart=always
+RestartSec=3
+# Root, unavoidably: `pvesh`, `qm guest exec` and the approve-an-upgrade
+# actions all require it. The exposure is bounded by the bind address —
+# the socket is on 127.0.0.1 and nothing forwards it.
+User=root
+# A sampler that leaks would take the hypervisor's RAM with it. 300M is
+# roughly 10x the resident size of a full history window.
+MemoryMax=300M
+# The one file it writes is the now-playing line the lofi player leaves.
+ProtectHome=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

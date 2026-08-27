@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Managed by Ansible (pve_kiosk) — edits will be overwritten
+#
+# Plays the stream, audio only, outside the browser entirely.
+#
+# Not in the kiosk page: cog has exactly one window and the dashboard is
+# in it, and WPE WebKit is a poor YouTube client — the player detects it
+# and degrades or refuses. mpv shells out to yt-dlp for the stream URL and
+# then just plays audio, which is the part actually wanted.
+#
+# mpv is pointed at the pinned yt-dlp in its own venv rather than letting
+# it find one on PATH. Debian's is too old to resolve YouTube at all, and
+# leaving the choice to PATH order is how you end up silently back on it.
+#
+# The volume starts at zero and climbs. Starting at a normal level at 8pm
+# is how you get startled by your own hypervisor.
+set -euo pipefail
+
+URL={{ kiosk_lofi_url | quote }}
+TARGET={{ kiosk_lofi_volume }}
+RAMP_MIN={{ kiosk_lofi_ramp_minutes }}
+DEVICE={{ kiosk_lofi_alsa_device | quote }}
+YTDLP="{{ kiosk_dir }}/ytdlp/bin/yt-dlp"
+NOW="{{ kiosk_dir }}/lofi-now"
+SOCK=/run/kiosk-lofi.sock
+
+if [ -z "$URL" ]; then
+    echo "kiosk_lofi_url is not set — nothing to play" >&2
+    exit 1
+fi
+
+if [ ! -x "$YTDLP" ]; then
+    echo "$YTDLP is missing — the pinned yt-dlp venv was never built" >&2
+    exit 1
+fi
+
+rm -f "$SOCK"
+cleanup() {
+    # SIGTERM from `systemctl stop` lands here; without this the mpv child
+    # survives the unit and keeps playing to an empty room.
+    [ -n "${MPV:-}" ] && kill "$MPV" 2>/dev/null || true
+    rm -f "$SOCK" "$NOW"
+}
+trap cleanup EXIT INT TERM
+
+mpv \
+    --no-video \
+    --no-terminal \
+    --idle=no \
+    --volume=0 \
+    --ao=alsa \
+    --audio-device="alsa/$DEVICE" \
+    --ytdl-format=bestaudio \
+    --script-opts="ytdl_hook-ytdl_path=$YTDLP" \
+    --input-ipc-server="$SOCK" \
+    --cache=yes \
+    --demuxer-max-bytes=64MiB \
+    "$URL" &
+MPV=$!
+
+ipc() {
+    # mpv's IPC is one JSON object per line over a unix socket. socat would
+    # be the usual tool; this avoids installing it for two lines of shell.
+    [ -S "$SOCK" ] || return 0
+    printf '%s\n' "$1" | timeout 2 python3 -c '
+import socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.connect(sys.argv[1])
+s.sendall(sys.stdin.buffer.read())
+s.settimeout(1.5)
+try:
+    sys.stdout.write(s.recv(65536).decode())
+except OSError:
+    pass
+' "$SOCK" 2>/dev/null || true
+}
+
+# Wait for the socket: yt-dlp has to resolve the stream first, which on a
+# live YouTube URL is a few seconds.
+for _ in $(seq 1 60); do
+    [ -S "$SOCK" ] && break
+    kill -0 "$MPV" 2>/dev/null || exit 1
+    sleep 1
+done
+
+STEPS=$(( RAMP_MIN * 4 ))
+[ "$STEPS" -lt 1 ] && STEPS=1
+INTERVAL=$(( RAMP_MIN * 60 / STEPS ))
+[ "$INTERVAL" -lt 1 ] && INTERVAL=1
+
+for i in $(seq 1 "$STEPS"); do
+    kill -0 "$MPV" 2>/dev/null || break
+    VOL=$(( TARGET * i / STEPS ))
+    ipc "{\"command\":[\"set_property\",\"volume\",$VOL]}" >/dev/null
+    # Whatever mpv thinks is playing, for the header pill. Falls back to
+    # nothing rather than a stale title if the property is unavailable.
+    ipc '{"command":["get_property","media-title"]}' \
+        | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("data","") or "")
+except Exception: pass' > "$NOW" 2>/dev/null || true
+    sleep "$INTERVAL"
+done
+
+# Integer division above lands a step or two short of the target on some
+# ramp lengths; set it exactly once the climb is over.
+ipc "{\"command\":[\"set_property\",\"volume\",$TARGET]}" >/dev/null
+
+wait "$MPV"

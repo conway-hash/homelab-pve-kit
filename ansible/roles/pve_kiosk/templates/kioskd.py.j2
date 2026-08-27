@@ -1,0 +1,1071 @@
+#!/usr/bin/env python3
+# Managed by Ansible (pve_kiosk) — edits will be overwritten
+#
+# One process: samples this box, keeps the history the graphs draw, and
+# serves both plus the page itself on 127.0.0.1.
+#
+# This replaced a bash collector on a 10s systemd timer writing one
+# data.json, with python3 -m http.server in front of it. Three reasons it
+# had to go:
+#
+#   1. A timer has exactly one interval, so everything ran at the speed of
+#      the slowest source. /proc/stat is free and `pvesh` costs ~150ms, so
+#      "cheap enough for 1s" got dragged down to 10s and the graphs were
+#      staircases.
+#   2. History lived in the browser, so every reload started the lines over.
+#   3. Twelve cores, per-guest agent calls and per-peer TLS probes in
+#      bash+jq is where that script stopped being the simple option.
+#
+# Nothing but the standard library — python3 is already on a Proxmox host
+# because Proxmox itself uses it, and adding a web framework to hand JSON
+# to a browser on the same machine would be the heavier choice.
+import json
+import os
+import re
+import socket
+import ssl
+import subprocess
+import threading
+import time
+from collections import deque
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+NODE = "{{ pve_node }}"
+PORT = {{ kiosk_port }}
+DIR = "{{ kiosk_dir }}"
+FAST = {{ kiosk_fast_seconds }}
+GUEST = {{ kiosk_guest_seconds }}
+AGENT = {{ kiosk_agent_seconds }}
+SLOW = {{ kiosk_slow_seconds }}
+KEEP = {{ kiosk_history_points }}
+GPU_NAME_OVERRIDE = {{ kiosk_gpu_name | to_json }}
+HTTPS_HOSTS = {{ kiosk_https_check_hosts | to_json }}
+CONTROL_URL = "{{ headscale_server_url }}"
+LOFI = {
+    "url": {{ kiosk_lofi_url | to_json }},
+    "start": "{{ kiosk_lofi_start }}",
+    "stop": "{{ kiosk_lofi_stop }}",
+    "volume": {{ kiosk_lofi_volume }},
+    "ramp": {{ kiosk_lofi_ramp_minutes }},
+}
+
+# Guests this repo created carry a vmid at the top of the range and are
+# cloned from a template; guests someone clicked together in the web UI
+# live in the 100s. That split is the repo's own allocation rule
+# (group_vars/pve_host/vars.yml), so the kiosk can classify a guest without
+# being told which ones Ansible owns.
+MANAGED_VMIDS = {{ pve_guests | map(attribute='vmid') | list | to_json }}
+
+
+def sh(*args, timeout=10):
+    """Run a command, return stdout, never raise.
+
+    Every source has to fail alone: a wedged tailscaled must not blank the
+    guest list, and a guest without an agent must not stop the GPU graph.
+    """
+    try:
+        out = subprocess.run(
+            args, capture_output=True, timeout=timeout, check=False
+        )
+        return out.stdout.decode("utf-8", "replace") if out.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def pvesh(path, *args, timeout=10):
+    """`pvesh get <path> [--flag value]`.
+
+    Options go through as flags, never as a query string on the path —
+    `pvesh get /nodes/pve/tasks?limit=60` does not fail loudly, it answers
+    "No 'get' handler defined" and this returns an empty log with no
+    indication anything went wrong.
+    """
+    raw = sh("pvesh", "get", path, *args, "--output-format", "json",
+             timeout=timeout)
+    try:
+        return json.loads(raw) if raw else None
+    except ValueError:
+        return None
+
+
+def read(path, default=""):
+    try:
+        with open(path) as fh:
+            return fh.read().strip()
+    except OSError:
+        return default
+
+
+def readint(path, default=0):
+    try:
+        return int(read(path, ""))
+    except ValueError:
+        return default
+
+
+class Series:
+    """A fixed-length ring of samples, addressed by a global sequence number.
+
+    The page asks for everything after the last sequence it saw, so a 1Hz
+    poll ships one number per series instead of the whole window. `base` is
+    the sequence of the oldest sample still held; asking for anything older
+    than that gets the full window back instead.
+    """
+
+    def __init__(self):
+        self.v = deque(maxlen=KEEP)
+        self.base = 0
+
+    def push(self, value):
+        if len(self.v) == KEEP:
+            self.base += 1
+        self.v.append(value)
+
+    def since(self, seq):
+        if seq is None or seq < self.base:
+            return list(self.v), self.base
+        off = seq - self.base
+        return list(self.v)[off:], seq
+
+
+class State:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.seq = 0
+        self.series = {}
+        self.now = {}
+        self.guests = []
+        self.guest_hist = {}
+        self.tailnet = {}
+        self.slow = {}
+        self.actions = deque(maxlen=40)
+
+    def s(self, key):
+        if key not in self.series:
+            self.series[key] = Series()
+        return self.series[key]
+
+
+ST = State()
+
+
+# ── local sampling ───────────────────────────────────────────────────
+# Everything in this section reads /proc or /sys and returns in
+# microseconds, which is what makes a 1s tick reasonable.
+
+
+def cpu_times():
+    """Per-core jiffy counters. Index 0 is the aggregate 'cpu' line."""
+    out = []
+    for line in read("/proc/stat").splitlines():
+        if not line.startswith("cpu"):
+            break
+        f = line.split()
+        vals = [int(x) for x in f[1:]]
+        idle = vals[3] + (vals[4] if len(vals) > 4 else 0)
+        out.append((sum(vals), idle))
+    return out
+
+
+def meminfo():
+    m = {}
+    for line in read("/proc/meminfo").splitlines():
+        k, _, v = line.partition(":")
+        m[k] = int(v.split()[0]) * 1024
+    total = m.get("MemTotal", 0)
+    # MemAvailable, not MemFree: the kernel counts reclaimable page cache
+    # as free-for-practical-purposes, and on a hypervisor that cache is
+    # most of "used" on any box with uptime. Reporting MemFree here is what
+    # makes a healthy machine look like it is out of RAM.
+    avail = m.get("MemAvailable", m.get("MemFree", 0))
+    return {
+        "total": total,
+        "used": total - avail,
+        "available": avail,
+        "cached": m.get("Cached", 0) + m.get("SReclaimable", 0),
+        "buffers": m.get("Buffers", 0),
+        "swap_total": m.get("SwapTotal", 0),
+        "swap_used": m.get("SwapTotal", 0) - m.get("SwapFree", 0),
+    }
+
+
+def hwmon_by_name():
+    found = {}
+    base = "/sys/class/hwmon"
+    try:
+        for entry in os.listdir(base):
+            found.setdefault(read(f"{base}/{entry}/name"), f"{base}/{entry}")
+    except OSError:
+        pass
+    return found
+
+
+def cpu_temps(hw):
+    """Whatever this CPU actually exposes, labelled the way the driver does.
+
+    On the Ryzen 3600X in this box k10temp offers exactly two: Tctl (the
+    control loop's value, which is what the fan curve follows) and Tccd1
+    (the die's real sensor). There is no per-core temperature to read on
+    this part — asking for twelve numbers cannot produce them, so the page
+    shows the two that exist rather than inventing ten.
+    """
+    path = hw.get("k10temp") or hw.get("coretemp")
+    if not path:
+        return []
+    out = []
+    for idx in range(1, 12):
+        raw = f"{path}/temp{idx}_input"
+        if not os.path.exists(raw):
+            continue
+        out.append(
+            {
+                "label": read(f"{path}/temp{idx}_label", f"temp{idx}"),
+                "c": round(readint(raw) / 1000, 1),
+            }
+        )
+    return out
+
+
+def gpu_sample(hw):
+    dev = None
+    for card in sorted(os.listdir("/sys/class/drm")):
+        cand = f"/sys/class/drm/{card}/device"
+        if re.fullmatch(r"card\d+", card) and os.path.exists(
+            f"{cand}/gpu_busy_percent"
+        ):
+            dev = cand
+            break
+    if not dev:
+        return None
+    mon = hw.get("amdgpu", "")
+    total = readint(f"{dev}/mem_info_vram_total")
+    return {
+        "name": GPU_NAME_OVERRIDE or GPU_INFO["name"],
+        "driver": GPU_INFO["driver"],
+        "pci": GPU_INFO["pci"],
+        "busy": readint(f"{dev}/gpu_busy_percent"),
+        "mem_busy": readint(f"{dev}/mem_busy_percent"),
+        "vram_used": readint(f"{dev}/mem_info_vram_used"),
+        "vram_total": total,
+        "temp": round(readint(f"{mon}/temp1_input") / 1000, 1) if mon else 0,
+        "fan_rpm": readint(f"{mon}/fan1_input") if mon else 0,
+        "watts": round(readint(f"{mon}/power1_input") / 1e6, 1) if mon else 0,
+        "sclk": round(readint(f"{mon}/freq1_input") / 1e6),
+        "mclk": round(readint(f"{mon}/freq2_input") / 1e6),
+    }
+
+
+def gpu_identify():
+    """The best name available, and honest about where it came from.
+
+    lspci reads the shared PCI ID database, where 1002:67df is one entry
+    covering the entire RX 470/480/570/580/590 family — the ID genuinely
+    does not distinguish them. The subsystem ID gets as far as the board
+    partner's model line. kiosk_gpu_name overrides both when you know
+    exactly which card is in the slot.
+    """
+    info = {"name": "GPU", "driver": "", "pci": ""}
+    for line in sh("lspci", "-nn", "-D").splitlines():
+        if re.search(r"(VGA compatible controller|3D controller)", line):
+            info["pci"] = line.split()[0]
+            desc = line.split(": ", 1)[-1]
+            sub = sh("lspci", "-s", info["pci"], "-v")
+            match = re.search(r"Subsystem: (.+)", sub)
+            info["name"] = (match.group(1) if match else desc).split(" [")[0].strip()
+            drv = re.search(r"Kernel driver in use: (\S+)", sub)
+            info["driver"] = drv.group(1) if drv else ""
+            break
+    return info
+
+
+GPU_INFO = gpu_identify()
+
+
+def net_counters():
+    """Byte counters per interface, only for the ones that mean something.
+
+    vmbr0 and tailscale0 are not the same number counted twice, which is
+    the obvious suspicion given they share one physical NIC. vmbr0 is the
+    Linux bridge carrying every guest's traffic on the LAN in cleartext;
+    tailscale0 is the WireGuard tunnel, and a byte on it is counted again
+    on vmbr0 on its way out, encrypted. So tailscale0 is a strict subset of
+    vmbr0, measured before encapsulation.
+    """
+    out = {}
+    for line in read("/proc/net/dev").splitlines()[2:]:
+        name, _, rest = line.partition(":")
+        name = name.strip()
+        if not re.fullmatch(r"(vmbr\d+|tailscale\d+|en\w+|eth\d+|tap\d+i\d+)", name):
+            continue
+        f = rest.split()
+        out[name] = (int(f[0]), int(f[8]))
+    return out
+
+
+PREV_CPU = None
+PREV_NET = None
+PREV_NET_T = None
+
+
+def fast_tick():
+    global PREV_CPU, PREV_NET, PREV_NET_T
+    hw = hwmon_by_name()
+    now = time.time()
+
+    cpu = cpu_times()
+    pct = []
+    if PREV_CPU and len(PREV_CPU) == len(cpu):
+        for (t0, i0), (t1, i1) in zip(PREV_CPU, cpu):
+            dt, di = t1 - t0, i1 - i0
+            pct.append(round(max(0.0, min(100.0, (dt - di) / dt * 100)), 1) if dt else 0.0)
+    else:
+        pct = [0.0] * len(cpu)
+    PREV_CPU = cpu
+
+    mem = meminfo()
+    gpu = gpu_sample(hw)
+    temps = cpu_temps(hw)
+
+    counters = net_counters()
+    rates = {}
+    if PREV_NET and PREV_NET_T:
+        dt = max(0.001, now - PREV_NET_T)
+        for name, (rx, tx) in counters.items():
+            if name not in PREV_NET:
+                continue
+            prx, ptx = PREV_NET[name]
+            # A counter that went backwards means the interface was
+            # recreated, not that traffic was negative.
+            rates[name] = {
+                "rx": max(0, int((rx - prx) / dt)),
+                "tx": max(0, int((tx - ptx) / dt)),
+                "total_rx": rx,
+                "total_tx": tx,
+            }
+    PREV_NET, PREV_NET_T = counters, now
+
+    load = [float(x) for x in read("/proc/loadavg", "0 0 0").split()[:3]]
+    uptime = float(read("/proc/uptime", "0").split()[0])
+
+    with ST.lock:
+        ST.seq += 1
+        ST.s("cpu").push(pct[0] if pct else 0.0)
+        for i, value in enumerate(pct[1:]):
+            ST.s(f"core{i}").push(value)
+        ST.s("mem").push(round(mem["used"] / mem["total"] * 100, 1) if mem["total"] else 0)
+        for temp in temps:
+            ST.s("t_" + temp["label"]).push(temp["c"])
+        if gpu:
+            ST.s("gpu").push(float(gpu["busy"]))
+            ST.s("gpu_mem").push(
+                round(gpu["vram_used"] / gpu["vram_total"] * 100, 1)
+                if gpu["vram_total"]
+                else 0
+            )
+            ST.s("gpu_temp").push(gpu["temp"])
+        for name, r in rates.items():
+            ST.s(f"rx_{name}").push(r["rx"])
+            ST.s(f"tx_{name}").push(r["tx"])
+        ST.now = {
+            "t": now,
+            "cores": len(pct) - 1,
+            "cpu_model": CPU_MODEL,
+            "board": BOARD,
+            "cpu": pct[0] if pct else 0.0,
+            "per_core": pct[1:],
+            "temps": temps,
+            "mem": mem,
+            "gpu": gpu,
+            "net": rates,
+            "load": load,
+            "uptime": uptime,
+        }
+
+
+CPU_MODEL = next(
+    (
+        line.split(":", 1)[1].strip()
+        for line in read("/proc/cpuinfo").splitlines()
+        if line.startswith("model name")
+    ),
+    "CPU",
+)
+BOARD = " ".join(
+    x
+    for x in (
+        read("/sys/class/dmi/id/board_vendor").split(" ")[0],
+        read("/sys/class/dmi/id/board_name"),
+    )
+    if x
+)
+
+
+# ── guests ───────────────────────────────────────────────────────────
+
+
+def guest_memory(vmid, fallback):
+    """What the guest is actually using, not what QEMU has mapped.
+
+    This is the bug the old dashboard had. `pvesh get /nodes/X/qemu` returns
+    a `mem` field that is the QEMU *process* RSS on the host — for vault
+    that reads 2.05 GiB against a 2 GiB assignment, i.e. over 100%, because
+    it counts the emulator's own overhead alongside the guest's RAM.
+    /status/current additionally carries `ballooninfo`, which the virtio
+    balloon driver inside the guest fills in: total_mem minus free_mem is
+    the number the guest itself would report, and the number Proxmox's own
+    UI draws. Where there is no agent and no balloon, fall back and say so,
+    rather than quietly showing the wrong one.
+    """
+    cur = pvesh(f"/nodes/{NODE}/qemu/{vmid}/status/current", timeout=8)
+    if not cur:
+        return {"used": fallback, "total": 0, "source": "host-rss"}
+    b = cur.get("ballooninfo") or {}
+    if b.get("total_mem") and b.get("free_mem") is not None:
+        return {
+            "used": b["total_mem"] - b["free_mem"],
+            "total": b["total_mem"],
+            "source": "balloon",
+            "host_rss": cur.get("memhost", fallback),
+        }
+    return {
+        "used": cur.get("mem", fallback),
+        "total": cur.get("maxmem", 0),
+        "source": "host-rss",
+        "host_rss": cur.get("memhost", fallback),
+    }
+
+
+def agent_exec(vmid, *argv, timeout=12):
+    """Run something inside a guest through the QEMU guest agent.
+
+    No SSH, no key, no listening port in the guest — the agent is already
+    enabled on every guest this repo builds, and the channel is a virtio
+    serial device, so this works on a guest that has fallen off the network
+    entirely. It does run as root in the guest, which is why the only
+    things sent through it here are read-only listings.
+    """
+    raw = sh("qm", "guest", "exec", str(vmid), "--timeout", "8", "--", *argv,
+             timeout=timeout)
+    try:
+        res = json.loads(raw) if raw else {}
+    except ValueError:
+        return None
+    if res.get("exitcode") != 0:
+        return None
+    return res.get("out-data", "")
+
+
+def guest_containers(vmid):
+    out = agent_exec(
+        vmid,
+        "/bin/sh",
+        "-c",
+        "docker ps -a --format '{% raw %}{{.Names}}\\t{{.State}}\\t{{.Status}}\\t{{.Image}}{% endraw %}' 2>/dev/null",
+    )
+    if not out:
+        return []
+    rows = []
+    for line in out.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) < 4:
+            continue
+        rows.append(
+            {
+                "name": parts[0],
+                "state": parts[1],
+                "status": parts[2],
+                "image": parts[3].split("@")[0],
+                # docker reports "(healthy)" inside the human status string
+                # and nowhere machine-readable in this format.
+                "healthy": "(healthy)" in parts[2],
+                "unhealthy": "(unhealthy)" in parts[2],
+            }
+        )
+    return sorted(rows, key=lambda r: r["name"])
+
+
+def guest_filesystems(vmid):
+    raw = sh("qm", "agent", str(vmid), "get-fsinfo", timeout=12)
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return []
+    out = []
+    for fs in data:
+        total = fs.get("total-bytes") or 0
+        if not total or fs.get("type") in ("tmpfs", "devtmpfs", "overlay"):
+            continue
+        out.append(
+            {
+                "mount": fs.get("mountpoint", "?"),
+                "type": fs.get("type", ""),
+                "total": total,
+                "used": fs.get("used-bytes", 0),
+            }
+        )
+    return sorted(out, key=lambda f: f["mount"])
+
+
+def classify(g):
+    if g.get("template"):
+        return "template"
+    return "automated" if g.get("vmid") in MANAGED_VMIDS else "manual"
+
+
+AGENT_CACHE = {}
+AGENT_LAST = 0.0
+
+
+def guest_tick():
+    global AGENT_LAST
+    qemu = pvesh(f"/nodes/{NODE}/qemu", timeout=15) or []
+    lxc = pvesh(f"/nodes/{NODE}/lxc", timeout=15) or []
+    do_agent = time.time() - AGENT_LAST >= AGENT
+
+    rows = []
+    for g in qemu + [dict(x, _lxc=True) for x in lxc]:
+        vmid = g.get("vmid")
+        running = g.get("status") == "running"
+        row = {
+            "vmid": vmid,
+            "name": g.get("name") or str(vmid),
+            "kind": "ct" if g.get("_lxc") else "vm",
+            "group": classify(g),
+            "status": g.get("status", "unknown"),
+            "running": running,
+            "uptime": g.get("uptime", 0),
+            "tags": [t for t in (g.get("tags") or "").split(";") if t],
+            # Allocation, which is a fact about the config and true whether
+            # or not the guest is on. The graphs show consumption against
+            # these ceilings.
+            "alloc": {
+                "cores": g.get("cpus", 0),
+                "memory": g.get("maxmem", 0),
+                "disk": g.get("maxdisk", 0),
+            },
+            "cpu": round((g.get("cpu") or 0) * 100, 1),
+            "net": {"rx": g.get("netin", 0), "tx": g.get("netout", 0)},
+        }
+        if running and not g.get("_lxc"):
+            row["memory"] = guest_memory(vmid, g.get("mem", 0))
+            if do_agent:
+                AGENT_CACHE[vmid] = {
+                    "containers": guest_containers(vmid),
+                    "fs": guest_filesystems(vmid),
+                }
+            row.update(AGENT_CACHE.get(vmid, {"containers": [], "fs": []}))
+        elif running:
+            row["memory"] = {
+                "used": g.get("mem", 0),
+                "total": g.get("maxmem", 0),
+                "source": "lxc",
+            }
+            row["containers"] = []
+            row["fs"] = []
+        else:
+            row["memory"] = {"used": 0, "total": g.get("maxmem", 0), "source": "off"}
+            row["containers"] = []
+            row["fs"] = []
+        rows.append(row)
+
+    if do_agent:
+        AGENT_LAST = time.time()
+
+    rows.sort(key=lambda r: (r["group"] != "automated", r["vmid"]))
+    with ST.lock:
+        for row in rows:
+            hist = ST.guest_hist.setdefault(
+                row["vmid"], {"cpu": deque(maxlen=120), "mem": deque(maxlen=120)}
+            )
+            hist["cpu"].append(row["cpu"])
+            mem = row["memory"]
+            hist["mem"].append(
+                round(mem["used"] / mem["total"] * 100, 1) if mem.get("total") else 0
+            )
+            row["hist"] = {"cpu": list(hist["cpu"]), "mem": list(hist["mem"])}
+        ST.guests = rows
+
+
+# ── tailnet, and the wider world ─────────────────────────────────────
+
+
+def https_probe(host, timeout=3):
+    """Connect to 443 and read the certificate. No request is ever sent.
+
+    Enough to answer "does this name have a working HTTPS front door", and
+    cheap enough to do for every peer once a minute. A self-signed or
+    otherwise unverifiable certificate still counts as *reachable* — it is
+    reported separately rather than as a failure, because on a tailnet a
+    self-signed certificate is a normal thing to find.
+    """
+    ctx = ssl.create_default_context()
+    try:
+        with socket.create_connection((host, 443), timeout) as raw:
+            with ctx.wrap_socket(raw, server_hostname=host) as tls:
+                cert = tls.getpeercert()
+                exp = datetime.strptime(
+                    cert["notAfter"], "%b %d %H:%M:%S %Y %Z"
+                ).replace(tzinfo=timezone.utc)
+                days = (exp - datetime.now(timezone.utc)).days
+                issuer = dict(x[0] for x in cert.get("issuer", ()))
+                return {
+                    "https": True,
+                    "valid": True,
+                    "days": days,
+                    "issuer": issuer.get("organizationName", ""),
+                }
+    except ssl.SSLError:
+        return {"https": True, "valid": False, "days": None, "issuer": ""}
+    except Exception:
+        return {"https": False, "valid": False, "days": None, "issuer": ""}
+
+
+def tailnet_tick():
+    raw = sh("tailscale", "status", "--json", timeout=8)
+    try:
+        ts = json.loads(raw) if raw else {}
+    except ValueError:
+        ts = {}
+    if not ts.get("Self"):
+        return {"ok": False, "nodes": [], "relays": []}
+
+    guest_names = {g["name"].lower() for g in ST.guests}
+    relays = set()
+
+    def node(p, me=False):
+        name = p.get("HostName") or "?"
+        dns = (p.get("DNSName") or "").rstrip(".")
+        online = True if me else bool(p.get("Online"))
+        direct = bool(p.get("CurAddr"))
+        relay = p.get("Relay") or ""
+        if online and not direct and relay and not me:
+            relays.add(relay)
+        return {
+            "id": p.get("ID") or name,
+            # The name Headscale knows it by, which is what the admin panel
+            # shows — not a prettified version of it.
+            "name": name,
+            "dns": dns,
+            "ip": (p.get("TailscaleIPs") or [""])[0],
+            "os": p.get("OS", ""),
+            "self": me,
+            "online": online,
+            "link": "self" if me else ("direct" if direct else ("relay" if online else "offline")),
+            "relay": relay,
+            "addr": p.get("CurAddr", ""),
+            # A guest of this hypervisor is drawn inside the hypervisor's
+            # group. That is the only "is under" relationship this box can
+            # actually observe — Headscale has no notion of one node
+            # hosting another, so matching the tailnet name against the
+            # guest list is what tells us vault lives on pve.
+            "parent": NODE if (not me and name.lower() in guest_names) else None,
+            "https": None,
+        }
+
+    nodes = [node(ts["Self"], me=True)]
+    nodes += [node(p) for p in (ts.get("Peer") or {}).values()]
+
+    wanted = [n for n in nodes if n["online"] and (not HTTPS_HOSTS or n["name"] in HTTPS_HOSTS)]
+    threads = []
+    for n in wanted:
+        if not n["dns"]:
+            continue
+
+        def probe(target=n):
+            target["https"] = https_probe(target["dns"])
+
+        th = threading.Thread(target=probe, daemon=True)
+        th.start()
+        threads.append(th)
+    for th in threads:
+        th.join(timeout=6)
+
+    return {
+        "ok": ts.get("BackendState") == "Running",
+        "state": ts.get("BackendState", "unknown"),
+        "nodes": nodes,
+        "relays": sorted(relays),
+    }
+
+
+def filesystems():
+    out = []
+    raw = sh(
+        "df", "-B1", "-x", "tmpfs", "-x", "devtmpfs", "-x", "efivarfs", "-x", "overlay",
+        "--output=source,target,fstype,size,used",
+    )
+    for line in raw.splitlines()[1:]:
+        f = line.split()
+        if len(f) < 5 or f[1] == "/etc/pve":
+            # Proxmox's own config fuse mount: always a few KB of a fixed
+            # 128 MB, and never says anything about disk pressure.
+            continue
+        out.append(
+            {
+                "device": f[0],
+                "mount": f[1],
+                "type": f[2],
+                "total": int(f[3]),
+                "used": int(f[4]),
+            }
+        )
+    return sorted(out, key=lambda x: -x["total"])
+
+
+def pending_updates():
+    """Split by what it costs you to take them.
+
+    Security patches land on their own overnight and need nothing from you.
+    A kernel or a pve-manager bump is the class you asked to approve by
+    hand, so they are counted separately and the page treats them
+    differently.
+    """
+    raw = sh("apt-get", "-s", "-o", "Debug::NoLocking=1", "dist-upgrade", timeout=90)
+    items = []
+    for line in raw.splitlines():
+        # The [current-version] bracket is absent when the package is not
+        # installed yet — which is the shape of every new kernel, since
+        # Proxmox installs alongside rather than over. Matching it as
+        # required silently dropped exactly the updates worth approving.
+        m = re.match(r"^Inst (\S+)(?: \[([^\]]*)\])? \(([^ ]+) ([^:]+)", line)
+        if not m:
+            continue
+        name, cur, new, origin = m.groups()
+        cur = cur or "(new)"
+        items.append(
+            {
+                "name": name,
+                "from": cur,
+                "to": new,
+                "origin": origin.strip(),
+                "security": "security" in origin.lower(),
+                "needs_reboot": bool(
+                    re.match(r"^(linux-image|linux-headers|pve-kernel|proxmox-kernel)", name)
+                ),
+                "pve": name.startswith(("pve-", "proxmox-", "qemu-server", "libpve")),
+            }
+        )
+    return sorted(items, key=lambda i: (not i["security"], i["name"]))
+
+
+def pve_tasks(limit=60):
+    rows = pvesh(f"/nodes/{NODE}/tasks", "--limit", str(limit), timeout=15) or []
+    out = []
+    for t in rows:
+        out.append(
+            {
+                "t": t.get("starttime", 0),
+                "end": t.get("endtime"),
+                "type": t.get("type", ""),
+                "id": t.get("id", ""),
+                "user": t.get("user", ""),
+                "status": t.get("status", "running"),
+                "ok": t.get("status") in (None, "OK"),
+                "source": "pve",
+            }
+        )
+    return out
+
+
+def journal_errors(limit=40):
+    raw = sh(
+        "journalctl", "-p", "warning", "-n", str(limit * 6), "-o", "json",
+        "--no-pager", "--since", "-6h", timeout=20,
+    )
+    # A service that is unhappy is usually unhappy repeatedly, and forty
+    # identical lines is a log pane that shows one event. Collapse to the
+    # most recent of each distinct message and carry the count.
+    seen = {}
+    for line in raw.splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        ident = e.get("SYSLOG_IDENTIFIER") or e.get("_COMM", "")
+        msg = (e.get("MESSAGE") or "")[:300]
+        # Addresses, pids and paths differ between otherwise identical
+        # events, so they are normalised out before comparing.
+        key = (ident, re.sub(r"\d{2,}", "#", msg))
+        row = seen.get(key)
+        stamp = int(e.get("__REALTIME_TIMESTAMP", 0)) / 1e6
+        if row:
+            row["count"] += 1
+            row["t"] = max(row["t"], stamp)
+            continue
+        seen[key] = {
+            "t": stamp,
+            "type": ident,
+            "id": "",
+            "user": "",
+            "status": "warn" if int(e.get("PRIORITY", 6)) >= 4 else "err",
+            "ok": False,
+            "msg": msg,
+            "count": 1,
+            "source": "journal",
+        }
+    return sorted(seen.values(), key=lambda r: -r["t"])[:limit]
+
+
+def slow_tick():
+    net_up = False
+    try:
+        socket.create_connection(("8.8.8.8", 53), 3).close()
+        net_up = True
+    except OSError:
+        pass
+
+    code = 0
+    for path in ("/health", "/"):
+        raw = sh(
+            "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+            "--max-time", "4", CONTROL_URL + path, timeout=8,
+        )
+        code = int(raw or 0)
+        if code:
+            break
+
+    failed = [
+        line.split()[0]
+        for line in sh(
+            "systemctl", "list-units", "--state=failed", "--no-legend", "--plain"
+        ).splitlines()
+        if line.strip()
+    ]
+
+    updates = pending_updates()
+    logs = sorted(pve_tasks() + journal_errors(), key=lambda x: -x["t"])[:80]
+
+    tn = tailnet_tick()
+
+    with ST.lock:
+        ST.tailnet = tn
+        ST.slow = {
+            "generated": time.time(),
+            "node": NODE,
+            "internet": net_up,
+            "control": {
+                "url": CONTROL_URL,
+                "code": code,
+                "online": 200 <= code < 500,
+            },
+            "fs": filesystems(),
+            "failed": failed,
+            "updates": updates,
+            "reboot_required": os.path.exists("/var/run/reboot-required"),
+            "reboot_pkgs": read("/var/run/reboot-required.pkgs").splitlines(),
+            "pve_version": sh("pveversion").strip(),
+            "logs": logs,
+            "lofi": lofi_state(),
+        }
+
+
+# ── the lofi stream ──────────────────────────────────────────────────
+
+
+def lofi_state():
+    active = (
+        subprocess.run(
+            ["systemctl", "is-active", "--quiet", "kiosk-lofi.service"], check=False
+        ).returncode
+        == 0
+    )
+    return {
+        "playing": active,
+        "configured": bool(LOFI["url"]),
+        "start": LOFI["start"],
+        "stop": LOFI["stop"],
+        "volume": LOFI["volume"],
+        "ramp": LOFI["ramp"],
+        "now": read(f"{DIR}/lofi-now", ""),
+    }
+
+
+# ── actions the screen can take ──────────────────────────────────────
+#
+# The whole security model is the bind address: the socket is on 127.0.0.1,
+# so reaching these means being root on this box already, or standing in
+# front of the monitor with the keyboard that is plugged into it. That is
+# the same bar as the physical power button, which does considerably more
+# damage. The page still makes each one a hold-to-confirm, because the
+# realistic accident is a cat on the keyboard, not an attacker.
+
+RUNNING = {}
+
+
+def run_action(name, argv):
+    def worker():
+        started = time.time()
+        proc = subprocess.run(argv, capture_output=True, check=False)
+        with ST.lock:
+            RUNNING.pop(name, None)
+            ST.actions.appendleft(
+                {
+                    "t": started,
+                    "name": name,
+                    "ok": proc.returncode == 0,
+                    "out": (proc.stdout + proc.stderr).decode("utf-8", "replace")[-4000:],
+                }
+            )
+
+    with ST.lock:
+        if name in RUNNING:
+            return False
+        RUNNING[name] = time.time()
+    threading.Thread(target=worker, daemon=True).start()
+    return True
+
+
+ACTIONS = {
+    # Everything apt can take without removing a package. This is the
+    # button for the class of update that was deliberately left out of
+    # unattended-upgrades: kernels, and Proxmox itself.
+    #
+    # `update` first, because the pending list this button acts on comes
+    # from a simulated run against whatever is in the cache — which may be
+    # a day old. --force-confold keeps config files you have edited rather
+    # than prompting, since there is nobody at a terminal to answer.
+    #
+    # A shell, uniquely here, because two commands have to run in order.
+    # The argv is a fixed literal; nothing from a request reaches it.
+    "upgrade": [
+        "/bin/sh",
+        "-c",
+        "apt-get update && apt-get -y -o Dpkg::Options::=--force-confold dist-upgrade",
+    ],
+    "reboot": ["systemctl", "reboot"],
+    "lofi-start": ["systemctl", "start", "kiosk-lofi.service"],
+    "lofi-stop": ["systemctl", "stop", "kiosk-lofi.service"],
+}
+
+
+# ── serving ──────────────────────────────────────────────────────────
+
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *_):
+        # A 1Hz poll would otherwise write 86400 lines a day into the
+        # journal to say the dashboard is still up.
+        pass
+
+    def send_json(self, obj, code=200):
+        body = json.dumps(obj, separators=(",", ":")).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        path, _, query = self.path.partition("?")
+        args = dict(
+            kv.split("=", 1) for kv in query.split("&") if "=" in kv
+        )
+        if path == "/api/fast":
+            raw = args.get("since")
+            since = int(raw) if raw and raw.isdigit() else None
+            with ST.lock:
+                # Each series carries its own starting sequence. They do
+                # not all begin on the same tick — network rates need a
+                # previous sample to exist, so those series are one tick
+                # younger than the CPU ones forever — and a single shared
+                # offset would quietly shift one of them against the other.
+                out = {}
+                for key, series in ST.series.items():
+                    vals, frm = series.since(since)
+                    out[key] = {"from": frm, "v": vals}
+                self.send_json(
+                    {
+                        "seq": ST.seq,
+                        "step": FAST,
+                        "keep": KEEP,
+                        "series": out,
+                        "now": ST.now,
+                    }
+                )
+            return
+        if path == "/api/slow":
+            with ST.lock:
+                self.send_json(
+                    {
+                        **ST.slow,
+                        "guests": ST.guests,
+                        "tailnet": ST.tailnet,
+                        "actions": list(ST.actions)[:6],
+                        "running": list(RUNNING),
+                    }
+                )
+            return
+        self.serve_file(path)
+
+    def do_POST(self):
+        if self.path != "/api/do":
+            self.send_json({"error": "not found"}, 404)
+            return
+        # A cross-origin form post cannot set a custom header, so requiring
+        # one means only the dashboard's own fetch() can reach this.
+        if self.headers.get("X-Kiosk") != "1":
+            self.send_json({"error": "missing X-Kiosk header"}, 403)
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except ValueError:
+            body = {}
+        name = body.get("action")
+        if name not in ACTIONS:
+            self.send_json({"error": "unknown action"}, 400)
+            return
+        self.send_json({"started": run_action(name, ACTIONS[name]), "action": name})
+
+    def serve_file(self, path):
+        name = "index.html" if path in ("/", "") else os.path.basename(path)
+        full = os.path.join(DIR, name)
+        if not os.path.isfile(full):
+            self.send_json({"error": "not found"}, 404)
+            return
+        with open(full, "rb") as fh:
+            body = fh.read()
+        ctype = "text/html; charset=utf-8" if name.endswith(".html") else "text/plain"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def loop(fn, every, name):
+    def run():
+        while True:
+            start = time.time()
+            try:
+                fn()
+            except Exception as exc:  # a sampler must never take the daemon down
+                print(f"[{name}] {exc.__class__.__name__}: {exc}", flush=True)
+            time.sleep(max(0.05, every - (time.time() - start)))
+
+    threading.Thread(target=run, daemon=True, name=name).start()
+
+
+def main():
+    fast_tick()
+    loop(fast_tick, FAST, "fast")
+    loop(guest_tick, GUEST, "guest")
+    loop(slow_tick, SLOW, "slow")
+    # The first slow pass shells out to apt and probes every peer, which
+    # takes a few seconds; serving starts immediately and those panels fill
+    # in when it lands, rather than holding the page back.
+    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    srv.daemon_threads = True
+    print(f"kioskd listening on 127.0.0.1:{PORT}", flush=True)
+    srv.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

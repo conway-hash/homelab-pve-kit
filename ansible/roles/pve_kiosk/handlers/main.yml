@@ -3,10 +3,33 @@
   ansible.builtin.systemd_service:
     daemon_reload: true
 
-- name: Restart kiosk data timer
+- name: Restart the kiosk daemon
   ansible.builtin.systemd_service:
-    name: kiosk-data.timer
+    name: kiosk.service
     state: restarted
-  # Only meaningful once the unit exists; on the very first run the
-  # enable task below creates it anyway.
+    daemon_reload: true
+  # On the very first run the unit does not exist yet — the enable task
+  # starts it. Failing here would abort the play before it got there.
   failed_when: false
+
+# Two handlers on one topic, in order: find out whether the stream is
+# playing, then bounce it only if it is.
+#
+# The reason it is not simply `state: restarted` is that restarting a
+# stopped unit STARTS it — a converge at 2pm would begin playing music at
+# whatever volume the ramp last left, which is the exact surprise the ramp
+# exists to prevent. `systemctl try-restart` has these semantics in one
+# word, but reaching for it means the command module in place of a module
+# that exists, so this pays two tasks instead.
+- name: Find out whether the lofi stream is playing
+  ansible.builtin.service_facts:
+  listen: Bounce a playing lofi stream
+
+- name: Restart the lofi stream if it is playing
+  ansible.builtin.systemd_service:
+    name: kiosk-lofi.service
+    state: restarted
+  when: >-
+    (ansible_facts.services | default({})).get('kiosk-lofi.service', {}).get('state')
+    == 'running'
+  listen: Bounce a playing lofi stream

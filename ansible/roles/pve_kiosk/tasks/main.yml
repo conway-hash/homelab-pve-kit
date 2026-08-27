@@ -21,6 +21,11 @@
   # system-config-printer and upower. cog is WebKit built for exactly this
   # job and adds no daemons at all.
   #
+  # jq is no longer needed by this role — the collector is python now — but
+  # it stays because removing a package a previous run installed is not
+  # something a role should do behind your back, and it is generally useful
+  # on a hypervisor.
+  #
   # install_recommends: false matters here; chromium's numbers above were
   # what made this worth measuring rather than assuming.
   ansible.builtin.apt:
@@ -32,6 +37,38 @@
     state: present
     install_recommends: false
 
+- name: Install the audio stack for the lofi stream
+  # Only when there is something to play. mpv drags in a media stack, and a
+  # box with kiosk_lofi_url unset has no use for it.
+  #
+  # yt-dlp is deliberately NOT in this list. Debian's is too old to play
+  # YouTube — see kiosk_ytdlp_version in group_vars for the measurement —
+  # so it comes from PyPI in the next task instead.
+  ansible.builtin.apt:
+    name:
+      - mpv
+      - alsa-utils
+      - python3-venv
+    state: present
+    install_recommends: false
+  when: kiosk_lofi_url | length > 0
+
+- name: Install yt-dlp from PyPI, pinned
+  # Its own venv, not --break-system-packages: this is a Proxmox host, and
+  # Proxmox's own tooling is the python3 site-packages you would be writing
+  # into. A directory under {{ kiosk_dir }} cannot affect it.
+  #
+  # mpv does not link yt-dlp, it execs it, so pointing mpv at this path is
+  # all that is needed — nothing goes on PATH and nothing shadows a system
+  # binary. Renovate opens a PR when upstream moves.
+  ansible.builtin.pip:
+    name: "yt-dlp=={{ kiosk_ytdlp_version }}"
+    virtualenv: "{{ kiosk_dir }}/ytdlp"
+    virtualenv_command: python3 -m venv
+    state: present
+  when: kiosk_lofi_url | length > 0
+  notify: Bounce a playing lofi stream
+
 - name: Create the kiosk directory
   ansible.builtin.file:
     path: "{{ kiosk_dir }}"
@@ -40,15 +77,15 @@
     group: root
     mode: "0755"
 
-- name: Install the data collector
+- name: Install the sampler daemon
   ansible.builtin.template:
-    src: collect.sh.j2
-    dest: "{{ kiosk_dir }}/collect.sh"
+    src: kioskd.py.j2
+    dest: "{{ kiosk_dir }}/kioskd.py"
     owner: root
     group: root
     mode: "0755"
-    validate: bash -n %s
-  notify: Restart kiosk data timer
+    validate: python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" %s
+  notify: Restart the kiosk daemon
 
 - name: Install the dashboard page
   ansible.builtin.template:
@@ -57,6 +94,20 @@
     owner: root
     group: root
     mode: "0644"
+  # The daemon reads the page off disk per request, so there is nothing to
+  # restart — a browser refresh is enough. It is notified anyway because
+  # the page and the API it talks to are versioned together.
+  notify: Restart the kiosk daemon
+
+- name: Install the lofi player
+  ansible.builtin.template:
+    src: lofi.sh.j2
+    dest: "{{ kiosk_dir }}/lofi.sh"
+    owner: root
+    group: root
+    mode: "0755"
+    validate: bash -n %s
+  when: kiosk_lofi_url | length > 0
 
 - name: Install the systemd units
   ansible.builtin.template:
@@ -65,39 +116,79 @@
     owner: root
     group: root
     mode: "0644"
+  loop: "{{ ['kiosk.service'] + (lofi_units if kiosk_lofi_url | length > 0 else []) }}"
+  vars:
+    lofi_units:
+      - kiosk-lofi.service
+      - kiosk-lofi.timer
+      - kiosk-lofi-stop.service
+      - kiosk-lofi-stop.timer
+  notify: Reload systemd
+
+- name: Retire the units the bash collector needed
+  # collect.sh + a 10s timer + python3 -m http.server became one daemon.
+  # Left enabled, the old timer keeps rewriting a data.json nothing reads
+  # and the old web server keeps holding the port the daemon wants — the
+  # second of which is a hard failure, not just clutter.
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
   loop:
-    - kiosk-data.service
     - kiosk-data.timer
+    - kiosk-data.service
     - kiosk-web.service
+  failed_when: false
+
+- name: Remove the retired unit files and the collector
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/kiosk-data.timer
+    - /etc/systemd/system/kiosk-data.service
+    - /etc/systemd/system/kiosk-web.service
+    - "{{ kiosk_dir }}/collect.sh"
+    - "{{ kiosk_dir }}/data.json"
+    - "{{ kiosk_dir }}/.netprev"
   notify: Reload systemd
 
 - name: Reload systemd before enabling anything it has not seen yet
   ansible.builtin.meta: flush_handlers
 
-- name: Produce a first data.json before the browser asks for one
-  # Without this the page's first fetch 404s and the panels sit empty
-  # until the timer's OnBootSec elapses — which looks broken on a screen
-  # someone is standing in front of.
-  ansible.builtin.command: "{{ kiosk_dir }}/collect.sh"
-  args:
-    creates: "{{ kiosk_dir }}/data.json"
+- name: Enable the kiosk daemon
+  ansible.builtin.systemd_service:
+    name: kiosk.service
+    enabled: true
+    state: started
+  # Skipped in check mode, and it has to be. A dry run does not write the
+  # unit file above, so systemd has never heard of kiosk.service and this
+  # fails with "Could not find the requested service" — on the very PR that
+  # introduces it, which is the gating ansible-check job. Nothing was
+  # installed in a dry run, so there is nothing here to preview.
+  when: not ansible_check_mode
 
-- name: Enable the collector timer and the local web server
+- name: Enable the lofi timers
   ansible.builtin.systemd_service:
     name: "{{ item }}"
     enabled: true
     state: started
   loop:
-    - kiosk-data.timer
-    - kiosk-web.service
+    - kiosk-lofi.timer
+    - kiosk-lofi-stop.timer
+  # Same reason as the daemon above.
+  when: kiosk_lofi_url | length > 0 and not ansible_check_mode
 
 - name: Point tty1 at the kiosk instead of btop
   # tty1 already autologins root and runs btop from .bash_profile; this
   # replaces what that line launches, keeping the same mechanism.
   #
-  # Deliberately NOT `exec cage`: if cage or chromium fails to start, the
+  # Deliberately NOT `exec cage`: if cage or cog fails to start, the
   # shell falls through to btop and the monitor still shows something
   # useful instead of a bare prompt or a black screen.
+  #
+  # --enable-dev-tools is not set: there is a keyboard on this box, and a
+  # devtools window would replace the dashboard in cage's single slot.
   ansible.builtin.blockinfile:
     path: /root/.bash_profile
     create: true

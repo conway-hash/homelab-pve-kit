@@ -1,0 +1,7 @@
+# Managed by Ansible (pve_kiosk) — edits will be overwritten
+[Unit]
+Description=Stop the lofi stream
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl stop kiosk-lofi.service

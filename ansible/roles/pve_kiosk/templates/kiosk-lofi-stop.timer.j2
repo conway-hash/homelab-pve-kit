@@ -1,0 +1,11 @@
+# Managed by Ansible (pve_kiosk) — edits will be overwritten
+[Unit]
+Description=Stop the lofi stream at {{ kiosk_lofi_stop }}
+
+[Timer]
+OnCalendar=*-*-* {{ kiosk_lofi_stop }}:00
+Persistent=false
+Unit=kiosk-lofi-stop.service
+
+[Install]
+WantedBy=timers.target

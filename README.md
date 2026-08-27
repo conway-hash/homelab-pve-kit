@@ -31,7 +31,7 @@ been touched:
 | `pve_repos` | Disables the enterprise + Ceph repos, enables `pve-no-subscription`. **First**, because out of the box the enterprise repo is on with no subscription and every `apt` call 401s until this runs. |
 | `tailscale` | Installs and joins the tailnet. Not Proxmox-specific — guests reuse it as-is. |
 | `pve_host` | `sudo` (Proxmox doesn't ship it), unattended upgrades with **no automatic reboot**, Tailscale added to the allowed origins, and `package-updates=always`. |
-| `pve_kiosk` | Drives the monitor physically attached to the box: host metrics, guests, pending updates, and a live tailnet graph. |
+| `pve_kiosk` | Drives the monitor physically attached to the box: per-core CPU and temperatures, memory, GPU, network and filesystem graphs; guests and the containers inside them; a live tailnet graph; the Proxmox task log; and the buttons that approve an upgrade or a reboot. |
 
 And on each guest, in this order:
 
@@ -57,6 +57,10 @@ service_enabled:
 |---|---|---|---|
 | Vaultwarden | `vault` | its own guest, VM 101 | [docs/vault.md](docs/vault.md) |
 | Kiosk dashboard | `kiosk` | the hypervisor | [docs/kiosk.md](docs/kiosk.md) |
+
+Keeping the host patched is [docs/updates.md](docs/updates.md): security
+updates are taken automatically overnight, and kernel, Proxmox and reboot
+decisions wait for you to approve them — on the kiosk screen or over SSH.
 
 Three things read that file and none of them holds a second copy of it:
 `roles/pve_guests` creates or destroys the guest, `ansible/site.yml` gates the
@@ -128,7 +132,8 @@ both just means two bots opening the same GitHub Actions PR. Dependabot
 docs/
 ├── README.md                 the switches, and what off actually means
 ├── vault.md                  one file per service — setup, checks, teardown
-└── kiosk.md
+├── kiosk.md
+└── updates.md                when to patch, when to reboot, and what breaks
 
 ansible/
 ├── site.yml                  one play per host group

@@ -62,14 +62,95 @@ pve_repositories:
 # settings, which are only consulted once it is on.
 
 # Localhost only. Nothing about this is meant to be reachable off-box, so
-# the port never leaves 127.0.0.1 and no firewall rule is needed.
+# the port never leaves 127.0.0.1 and no firewall rule is needed. This is
+# also why the control endpoints (approve an upgrade, reboot) need no
+# authentication: reaching them means you are already root on this box or
+# standing in front of the screen it drives.
 kiosk_port: 8099
 kiosk_dir: /opt/kiosk
 
-# How often the collector rewrites data.json. The page polls at the same
-# rate. 10s is well under any dashboard's attention span and costs three
-# cheap local commands.
-kiosk_refresh_seconds: 10
+# ── Sampling cadence ─────────────────────────────────────────────────
+#
+# Three tiers, because the sources cost wildly different amounts. The old
+# single 10s timer had to run at the speed of its slowest source, which is
+# why the graphs were blocky: /proc/stat is free and `pvesh` is not.
+
+# Local sysfs and /proc — CPU per core, memory, GPU, network counters.
+# Costs nothing and is what makes a graph look like a line rather than a
+# staircase.
+kiosk_fast_seconds: 1
+
+# Guests, via the Proxmox API. One list call plus one status call per
+# guest, each around 150ms.
+kiosk_guest_seconds: 5
+
+# Guest introspection over the QEMU guest agent — filesystem usage and the
+# container list inside each VM. Deliberately slower than the guest poll:
+# it forks a process inside the guest, so it is the most expensive thing
+# here and the answer changes rarely.
+kiosk_agent_seconds: 20
+
+# Tailnet, HTTPS probes, pending apt updates, failed units, PVE task log.
+# All either shell out or touch the network.
+kiosk_slow_seconds: 60
+
+# How much history the daemon keeps in memory, per series. At
+# kiosk_fast_seconds=1 this is a 10-minute window; nothing is written to
+# disk, so a restart starts the graphs over.
+kiosk_history_points: 600
+
+# ── What the screen shows ────────────────────────────────────────────
+
+# Seconds a guest tab stays up before the view rotates to the next
+# non-empty one. Rotation pauses the moment the keyboard or mouse is
+# touched and resumes after kiosk_idle_seconds of quiet.
+kiosk_tab_seconds: 5
+kiosk_idle_seconds: 45
+
+# The GPU's real product name. PCI ID 1002:67df is shared by the whole
+# RX 470/480/570/580/590 family, so no amount of reading sysfs can narrow
+# it down — the subsystem ID gets as far as "Sapphire Nitro+ RX 570/580/590"
+# and the exact model is something only you know. Leave empty to show what
+# the PCI database says.
+kiosk_gpu_name: "Sapphire Nitro+ Radeon RX 580 4GB"
+
+# Peers whose MagicDNS name is checked for a working HTTPS front door, on
+# the kiosk_slow_seconds tick. Empty means every online peer is probed.
+# The probe is a TCP connect to 443 plus a certificate read — no request is
+# ever sent, so nothing is logged as traffic on the far end.
+kiosk_https_check_hosts: []
+
+# ── The lofi stream ──────────────────────────────────────────────────
+#
+# mpv plays it audio-only, entirely outside the browser: WPE WebKit is a
+# poor YouTube client and cog only has the one window, which the dashboard
+# is already using.
+#
+# yt-dlp is NOT taken from apt, and this is not a preference. Debian trixie
+# ships 2025.04.30; tested against the stream below it fails outright with
+# "ERROR: [youtube] The page needs to be reloaded", where a current yt-dlp
+# resolves the same URL fine. YouTube changes faster than a stable release
+# can follow, so this pins an upstream version into its own venv instead.
+#
+# renovate: datasource=pypi depName=yt-dlp versioning=pep440
+kiosk_ytdlp_version: "2026.08.19"
+
+# <-- change this: the stream to play. Any URL yt-dlp understands.
+kiosk_lofi_url: "https://www.youtube.com/watch?v=tRsQsTMvPNg"
+
+# Local time it starts. Volume begins at zero and ramps to
+# kiosk_lofi_volume over kiosk_lofi_ramp_minutes, so it never starts at a
+# level that makes you jump.
+kiosk_lofi_start: "20:00"
+kiosk_lofi_stop: "03:00"
+kiosk_lofi_volume: 45
+kiosk_lofi_ramp_minutes: 15
+
+# ALSA device mpv plays to. This box has two cards — the Realtek codec on
+# the motherboard (card 1) and the GPU's HDMI outputs (card 0). Speakers
+# plugged into the motherboard want card 1; sound over the monitor's HDMI
+# wants card 0.
+kiosk_lofi_alsa_device: "default"
 
 # The Proxmox node name pvesh is queried for — not necessarily the same
 # string as the tailnet hostname, though here they both happen to be "pve".
