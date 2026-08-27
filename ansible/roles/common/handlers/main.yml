@@ -14,17 +14,46 @@
   # unit is the real check.
   failed_when: false
 
-# Debian ships watchdog.service and wd_keepalive.service with Conflicts= on
-# each other: wd_keepalive exists to keep petting /dev/watchdog while watchdog
-# itself is being restarted. A plain `state: restarted` queues both, systemd
-# resolves the conflict by cancelling one of them, and the result is
-# "Job for watchdog.service canceled." — which reads like a service failure
-# rather than a scheduling conflict.
+# Restarting Debian's watchdog is not a plain restart, and getting this wrong
+# fails the whole play with an error that names none of the cause:
+# "Job for watchdog.service canceled."
 #
-# Stopping the keepalive first makes the transaction unambiguous. The hardware
-# timeout is guest_watchdog_timeout seconds and the gap here is under a second,
-# so nothing gets close to tripping a reset.
-- name: Stop wd_keepalive so the watchdog restart is not cancelled
+# What the shipped units actually say:
+#
+#   watchdog.service      Conflicts=wd_keepalive.service
+#                         OnFailure=wd_keepalive.service
+#                         ExecStopPost=sh -c '[ $run_wd_keepalive != 1 ] || false'
+#
+# That ExecStopPost fails ON PURPOSE whenever run_wd_keepalive=1, which is the
+# Debian default. So stopping watchdog marks it failed, the failure fires
+# OnFailure, OnFailure enqueues wd_keepalive — and wd_keepalive conflicts with
+# the START half of the very restart that triggered it. systemd resolves that
+# by cancelling the start, and you are left with the keepalive running and the
+# real daemon down. The handoff itself is deliberate: it exists so
+# /dev/watchdog keeps being petted while the real daemon is down.
+#
+# The fix is simply never to say `restart`. A restart puts the stop and the
+# start in ONE transaction, which is what gives OnFailure something already
+# queued to cancel. Asking for the stop and the start as separate operations
+# leaves nothing pending to cancel: the final `start` is an ordinary "start
+# watchdog, stop the conflicting keepalive for it", and systemd resolves a
+# conflict against the explicitly requested job, not in favour of it.
+#
+# An earlier version stopped wd_keepalive first and believed that fixed it. It
+# cannot: the restart re-spawns keepalive through OnFailure, long after the
+# pre-emptive stop has run. It only ever appeared to work on a machine where
+# watchdog was not running yet — no stop, no stop-failure, no OnFailure —
+# which is why it survived the vault's first build and failed on the next guest.
+- name: Stop the watchdog daemon
+  listen: Restart watchdog
+  ansible.builtin.systemd_service:
+    name: watchdog
+    state: stopped
+  # EXPECTED to report failure — see ExecStopPost above. This is Debian handing
+  # the device over to the keepalive, not something going wrong.
+  failed_when: false
+
+- name: Stop the keepalive that took the watchdog's place
   listen: Restart watchdog
   ansible.builtin.systemd_service:
     name: wd_keepalive
@@ -32,8 +61,15 @@
   # Absent on some installs, and not an error when it is.
   failed_when: false
 
-- name: Restart the watchdog daemon
+- name: Start the watchdog daemon
   listen: Restart watchdog
   ansible.builtin.systemd_service:
     name: watchdog
-    state: restarted
+    state: started
+  register: common_watchdog_started
+  # A retry rather than a bare start: OnFailure's keepalive is started
+  # asynchronously, so it can still be settling when this runs, and a watchdog
+  # that quietly failed to come back defeats the whole layer it belongs to.
+  until: common_watchdog_started is success
+  retries: 5
+  delay: 3
