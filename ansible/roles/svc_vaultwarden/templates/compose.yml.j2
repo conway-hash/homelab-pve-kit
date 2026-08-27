@@ -39,10 +39,20 @@ services:
       - path: ./caddy.env
         format: raw
     ports:
-      - "443:443"
+      # Bound to the tailnet address, NOT 0.0.0.0. A bare "443:443" publishes on
+      # every interface this guest has — including its LAN address — which put
+      # the vault in front of every device on the home network. Docker's publish
+      # rules also sit in front of the host firewall, so this binding, not a
+      # rule, is what actually closes it.
+      - "{{ svc_vaultwarden_tailnet_ip.stdout | trim }}:443:443"
       # HTTP/3. Caddy serves it by default and Bitwarden's mobile clients will
       # use it; without the UDP mapping they fall back to TCP after a stall.
-      - "443:443/udp"
+      - "{{ svc_vaultwarden_tailnet_ip.stdout | trim }}:443:443/udp"
+      # Loopback as well, and load-bearing: healthcheck.sh curls
+      # --resolve <domain>:443:127.0.0.1. Drop this and the self-heal check can
+      # never connect, decides the vault is down, and restarts a perfectly
+      # healthy stack every six minutes forever.
+      - "127.0.0.1:443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./caddy-data:/data

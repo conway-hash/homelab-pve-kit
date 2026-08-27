@@ -107,17 +107,16 @@ it gets a checklist.
    thing to check afterwards.
 
 3. **Take a backup if you are about to do something bigger than a kernel.**
-   The nightly job runs at 03:30 and keeps 7 daily / 4 weekly, so there is
+   The nightly job runs at 03:30 and keeps 7 rolling dailies, so there is
    almost always a recent one. On demand:
 
    ```bash
-   ssh ci-deploy@pve.ts.conway-hash.com 'sudo vzdump 999 --storage local --mode snapshot'
+   ssh ci-deploy@pve.ts.conway-hash.com 'sudo vzdump 999 --storage tank --mode snapshot --compress zstd'
    ```
 
-   ⚠️ Backups land on `local`, which is the same physical disk (`sdb`) as the
-   guests. That protects you from a mistake, not from that disk dying. There
-   is a 900 GB `tank` pool in this box with 864 GB free if you ever want
-   somewhere better.
+   Backups land on `tank`, a ZFS pool on `sda` — a different physical disk
+   from the `sdb` that holds pve-root and every guest disk, so this survives
+   that disk dying and not just a mistake.
 
 4. **Reboot**, then confirm:
 

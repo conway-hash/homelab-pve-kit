@@ -29,6 +29,37 @@
       that matters. Mint one from Cloudflare's "Edit zone DNS" template —
       see docs/vault.md.
 
+# ── What the stack is allowed to listen on ───────────────────────────
+#
+# Docker publishes to 0.0.0.0 unless told otherwise, and this guest has a LAN
+# address (1.1.1.21) as well as a tailnet one. So `ports: 443:443` put the
+# vault on the home LAN, reachable by every device on it — a printer, a TV, any
+# IoT box — while every comment in this repo and docs/vault.md claimed it was
+# "reachable on the tailnet, and nowhere else". It was not. Confirmed by
+# curling https://1.1.1.21/alive off-tailnet and getting a 200.
+#
+# Binding to the tailnet address is what makes that claim true. There is no
+# firewall involved: the socket simply does not exist on the LAN interface.
+
+- name: Read the guest's tailnet address
+  # The tailscale role runs before this one in site.yml, so the interface is
+  # already up and holding its address by the time this asks.
+  ansible.builtin.command: tailscale ip -4
+  register: svc_vaultwarden_tailnet_ip
+  changed_when: false
+  check_mode: false
+
+- name: Refuse to deploy without a tailnet address
+  # Without this the template would render an empty bind address, which Docker
+  # reads as "all interfaces" — silently restoring the exact LAN exposure this
+  # is here to remove. Failing is the safe direction.
+  ansible.builtin.assert:
+    that: svc_vaultwarden_tailnet_ip.stdout | trim | length > 0
+    fail_msg: >-
+      `tailscale ip -4` returned nothing, so this guest is not on the tailnet.
+      Deploying now would publish the vault on every interface it has,
+      including the LAN. Fix the tailnet join first — see docs/vault.md.
+
 - name: Create the stack directory
   ansible.builtin.file:
     path: "{{ vaultwarden_dir }}"

@@ -25,7 +25,7 @@ service_enabled:
   # See docs/kiosk.md.
   kiosk: true
 
-  # Its own guest, VM 101. Turning this off DESTROYS that VM on the next run
+  # Its own guest, VM 999. Turning this off DESTROYS that VM on the next run
   # of the hypervisor play — use --check --diff first if you want warning.
   # See docs/vault.md.
   vault: true

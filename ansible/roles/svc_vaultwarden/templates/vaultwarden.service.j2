@@ -9,8 +9,13 @@
 [Unit]
 Description=Vaultwarden stack (Vaultwarden + Caddy)
 Requires=docker.service
-After=docker.service network-online.target
-Wants=network-online.target
+# tailscaled is in the ordering because the compose file now publishes on this
+# guest's tailnet address. If that interface has no address yet, Docker cannot
+# bind and the containers fail to start. tailscaled restores its address from
+# local state without needing to reach the coordination server, so this costs
+# nothing on a cold boot with the internet down.
+After=docker.service network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
 
 [Service]
 Type=oneshot

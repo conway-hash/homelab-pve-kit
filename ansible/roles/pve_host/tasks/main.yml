@@ -116,7 +116,8 @@
       - --storage={{ pve_backup_storage }}
       - --schedule={{ item.backup.schedule }}
       - --mode={{ pve_backup_mode }}
-      - --prune-backups=keep-daily={{ item.backup.keep_daily }},keep-weekly={{ item.backup.keep_weekly }}
+      - --compress={{ pve_backup_compress }}
+      - --prune-backups=keep-daily={{ item.backup.keep_daily }}
       - --enabled=1
       - --notification-mode=notification-system
   # Derived from the guest list rather than a parallel list of its own, so a
@@ -132,4 +133,52 @@
   # skipping — which would break this task on exactly the hosts that have the
   # most existing configuration to preserve.
   when: "'homelab-pve-kit ' + item.name not in (pve_host_backup_jobs.stdout | from_json | map(attribute='comment', default='') | list)"
+  changed_when: true
+
+# ⚠️ The task above is create-only, and skips entirely once a job with the
+# matching comment exists. On its own that means every var it reads —
+# storage, schedule, compression, retention — is applied ONCE, at creation,
+# and silently ignored forever after: you could edit this repo, watch the play
+# report `ok`, and have changed nothing on the host.
+#
+# That is not hypothetical. It is how the vault ended up still writing
+# uncompressed archives to `local` long after this repo said otherwise. A
+# create-only task in a converging playbook is a bug, so this is the other
+# half of it.
+- name: Converge the existing backup jobs
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - set
+      - /cluster/backup/{{ _job.id }}
+      - --storage={{ pve_backup_storage }}
+      - --schedule={{ item.backup.schedule }}
+      - --mode={{ pve_backup_mode }}
+      - --compress={{ pve_backup_compress }}
+      - --prune-backups=keep-daily={{ item.backup.keep_daily }}
+      - --enabled=1
+  loop: "{{ pve_guests | selectattr('backup', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.name }} (vmid {{ item.vmid }})"
+  vars:
+    # selectattr('comment', 'defined') first: a hand-made job may carry no
+    # comment key at all, and selectattr on a missing attribute raises rather
+    # than skipping.
+    _job: >-
+      {{ (pve_host_backup_jobs.stdout | from_json
+          | selectattr('comment', 'defined')
+          | selectattr('comment', 'equalto', 'homelab-pve-kit ' + item.name)
+          | list | first | default({})) }}
+  # Only when something actually differs, so a converged host reports `ok`
+  # rather than changing every run. Proxmox returns these as strings, and omits
+  # `compress` entirely when it was never set — hence the defaults.
+  when:
+    - _job.id is defined
+    - >-
+      _job.storage | default('') != pve_backup_storage
+      or _job.schedule | default('') != item.backup.schedule
+      or _job.mode | default('') != pve_backup_mode
+      or _job.compress | default('') != pve_backup_compress
+      or (_job['prune-backups'] | default({}))
+         != {'keep-daily': item.backup.keep_daily | string}
   changed_when: true

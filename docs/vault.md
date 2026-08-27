@@ -1,6 +1,6 @@
 # Vaultwarden
 
-A Bitwarden-compatible password manager on its own guest (VM 101), behind its
+A Bitwarden-compatible password manager on its own guest (VM 999), behind its
 own Caddy.
 
 ```yaml
@@ -12,11 +12,12 @@ service_enabled:
 | | |
 |---|---|
 | Flag | `vault` |
-| Runs on | its own guest, VM 101, created by the `pve_guests` role |
+| Runs on | its own guest, VM 999, created by the `pve_guests` role |
 | Roles | `common`, `tailscale`, `docker`, `svc_vaultwarden` |
 | Settings | `ansible/group_vars/vault_host/vars.yml` |
 | Secrets | `ansible/group_vars/vault_host/secrets.yml` (git-ignored) |
 | Reachable at | `https://vault.ts.conway-hash.com`, tailnet only |
+| Backed up to | `tank` (ZFS on sda), nightly 03:30, zstd, 7 rolling dailies |
 
 ## Why a VM and not an LXC container
 
@@ -48,6 +49,13 @@ vault.ts.conway-hash.com
   ├─ is validated    by Let's Encrypt over a DNS-01 TXT record in Cloudflare
   └─ is reachable    on the tailnet, and nowhere else
 ```
+
+"Nowhere else" is enforced by the compose file publishing 443 on this guest's
+**tailnet address** rather than `0.0.0.0`. That is not a detail: the guest also
+has a LAN address, and a bare `443:443` published the vault to every device on
+the home network for as long as it was written that way. Docker's publish rules
+also sit in front of the host firewall, so the bind address — not a firewall
+rule — is what actually closes it.
 
 That name is simultaneously a MagicDNS name and a real subdomain of a zone in
 Cloudflare, which is what makes this cheap: no public DNS record to create, no
@@ -145,8 +153,24 @@ curl -s https://vault.ts.conway-hash.com/api/config | jq .
 is not a backup:
 
 ```bash
-ssh ci-deploy@pve.ts.conway-hash.com 'sudo ls -la /var/lib/vz/dump/'
+ssh ci-deploy@pve.ts.conway-hash.com 'sudo ls -la /tank/dump/'
 ```
+
+⚠️ This host also carries a hand-made, all-guests backup job (02:30 → `tank`,
+`keep-last 7`) that predates this repo and is **not** managed by it — it is
+what covers the unmanaged VM 100. It backs the vault up a second time, which
+costs ~1.8G a night and a second snapshot freeze but is otherwise harmless. To
+stop that, exclude the vault from it by hand; there is deliberately no Ansible
+task for this, because the repo does not own jobs it did not create:
+
+```bash
+ssh ci-deploy@pve.ts.conway-hash.com \
+  'sudo pvesh set /cluster/backup/backup-2731efbf-8ff9 --exclude=999'
+```
+
+Archives are `.vma.zst` (~1.8G). If you ever see a bare `.vma` (~4.9G), the
+job lost its `--compress` — see `pve_backup_compress` in
+`group_vars/pve_host/vars.yml` for why that matters more than it looks.
 
 ## Staying up
 
@@ -173,7 +197,7 @@ the hardware watchdog covers the realistic case instead.
 
 ## Turning it off
 
-⚠️ Setting `vault: false` **destroys VM 101 on the next run of the hypervisor
+⚠️ Setting `vault: false` **destroys VM 999 on the next run of the hypervisor
 play**, disk and vault contents included. Run `--check --diff` first if you
 want to see it coming.
 

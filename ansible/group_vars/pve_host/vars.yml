@@ -200,11 +200,23 @@ pve_node: pve
 # its own `backup:` policy, so a vmid is written exactly once in this repo.
 # A guest with no `backup:` key gets no job.
 #
-# ⚠️ Confirmed on the host: /var/lib/vz/dump exists, so `local` takes backups.
-# It is the same physical disk (sdb) as the guests themselves, so this protects
-# against mistakes, not against that disk dying. There is an untouched 931G sda
-# in this box if you ever want somewhere better.
-pve_backup_storage: local
+# `tank` — a ZFS pool on sda, a DIFFERENT physical disk from the sdb that holds
+# pve-root and every guest disk. That is the entire point of the choice: a
+# backup sitting on the same disk as the thing it backs up protects against
+# mistakes only, never against that disk dying.
+#
+# ⚠️ NOT `local`. `local` is /var/lib/vz, which is on pve-root — the
+# hypervisor's ROOT filesystem, 64G with ~42G free. This was the live setting
+# until it was caught, and paired with uncompressed dumps (see below) it was
+# roughly a week from filling root and taking Proxmox down with it, which is a
+# far worse outage than a failed backup. See docs/vault.md.
+pve_backup_storage: tank
+
+# zstd, named explicitly because vzdump does NOT compress by default and the
+# default is the expensive one. Measured on this host, same guest: raw .vma
+# 4.88G, .vma.zst 1.77G. Leaving it unset is what made the retention below
+# unaffordable.
+pve_backup_compress: zstd
 
 # Snapshot, not stop: the guest keeps running. Vaultwarden's SQLite database is
 # in WAL mode and comes through consistently, and a nightly stop would be a
@@ -315,5 +327,9 @@ pve_guests:
     # Systemd calendar syntax, not cron.
     backup:
       schedule: "03:30"
+      # One rolling week: seven dailies, and the eighth night drops the oldest.
+      # No weeklies or monthlies. A password vault's useful restore window is
+      # "before I broke something", which is measured in days — a month-old
+      # archive is a vault missing every password added since, and restoring it
+      # would lose more than it recovers.
       keep_daily: 7
-      keep_weekly: 4
