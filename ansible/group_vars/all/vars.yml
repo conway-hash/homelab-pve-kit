@@ -20,6 +20,35 @@ tailnet_base_domain: ts.conway-hash.com
 # .github/workflows/ansible-lint.yml's "tailnet fact drift" step.
 headscale_server_url: https://vpn.conway-hash.com
 
+# ── ACME ─────────────────────────────────────────────────────────────
+#
+# The resolvers Caddy uses to check that its DNS-01 challenge record has
+# propagated, before telling Let's Encrypt to validate. Shared by every service
+# that fronts itself with Caddy, so it is declared here once — vault and links
+# both had their own copy, which is the duplication this repo has already paid
+# down elsewhere.
+#
+# Cloudflare's resolver specifically, and this is the whole reason the var
+# exists rather than being a default:
+#
+#   * The zone is hosted on Cloudflare, and Cloudflare's recursive resolver is
+#     cache-coherent with its own authoritative nameservers — a record written
+#     through the API is visible here immediately.
+#   * Google and Quad9 are NOT. They negative-cache the challenge name from
+#     whatever queried it before the record existed, and this zone's SOA
+#     minimum is 1800s. Caddy's propagation check gives up after ~2 minutes, so
+#     it can never outlast a 30-minute NODATA. That is not theoretical: it is
+#     exactly how the links certificate failed, with "timed out waiting for
+#     record to fully propagate" and a nil provider error — the record was
+#     written correctly and the checker was asking two resolvers that could not
+#     see it. The vault escaped it only because nothing had happened to query
+#     its challenge name first.
+#
+# ⚠️ 1.0.0.1, NOT 1.1.1.1. Same Cloudflare service, but this LAN is 1.1.1.0/24,
+# so 1.1.1.1 is a machine down the hall rather than a public resolver.
+acme_dns_resolvers:
+  - 1.0.0.1
+
 # ── Guest baseline ───────────────────────────────────────────────────
 #
 # Applied by the `common` role to every guest this repo creates. Here rather

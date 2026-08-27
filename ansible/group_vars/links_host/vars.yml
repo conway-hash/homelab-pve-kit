@@ -16,16 +16,6 @@ linkwarden_domain: "links.{{ tailnet_base_domain }}"
 
 linkwarden_dir: /opt/linkwarden
 
-# Resolvers Caddy uses for the ACME DNS-01 challenge, and only for that.
-#
-# ⚠️ Deliberately not 1.1.1.1. This LAN is 1.1.1.0/24, so that address belongs
-# to a machine on the network rather than to Cloudflare. See the same note in
-# group_vars/vault_host/vars.yml — this is the second service to need it,
-# which is exactly why it is written out rather than assumed.
-linkwarden_acme_resolvers:
-  - 8.8.8.8
-  - 9.9.9.9
-
 # <-- change this
 #
 # Where Let's Encrypt sends expiry warnings.

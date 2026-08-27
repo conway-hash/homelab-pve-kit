@@ -25,7 +25,7 @@
 		#
 		# NOT 1.1.1.1: this LAN is 1.1.1.0/24, so that address is a machine
 		# down the hall rather than Cloudflare's resolver.
-		resolvers {{ linkwarden_acme_resolvers | join(' ') }}
+		resolvers {{ acme_dns_resolvers | join(' ') }}
 	}
 
 	reverse_proxy linkwarden:3000

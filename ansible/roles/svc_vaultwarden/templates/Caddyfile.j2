@@ -29,7 +29,7 @@
 		#
 		# NOT 1.1.1.1: this LAN is 1.1.1.0/24, so that address is a machine
 		# down the hall rather than Cloudflare's resolver.
-		resolvers {{ vaultwarden_acme_resolvers | join(' ') }}
+		resolvers {{ acme_dns_resolvers | join(' ') }}
 	}
 
 	# Vaultwarden is not published on the host at all; it is reachable only

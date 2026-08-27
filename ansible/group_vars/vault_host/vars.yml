@@ -19,18 +19,6 @@ vaultwarden_domain: "vault.{{ tailnet_base_domain }}"
 
 vaultwarden_dir: /opt/vaultwarden
 
-# Resolvers Caddy uses for the ACME DNS-01 challenge, and only for that.
-#
-# It has to ask a real public resolver: the plugin finds the owning Cloudflare
-# zone by walking up SOA records, and the guest's own resolver is Tailscale
-# MagicDNS, which answers SOA with NOTIMP.
-#
-# ⚠️ Deliberately not 1.1.1.1. This LAN is 1.1.1.0/24, so that address belongs
-# to a machine on the network rather than to Cloudflare.
-vaultwarden_acme_resolvers:
-  - 8.8.8.8
-  - 9.9.9.9
-
 # <-- change this
 #
 # Where Let's Encrypt sends expiry warnings. A renewal that has been quietly
