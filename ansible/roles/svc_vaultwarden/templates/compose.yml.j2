@@ -10,7 +10,15 @@ services:
     # here.
     restart: unless-stopped
     env_file:
-      - ./vaultwarden.env
+      # format: raw — parsed literally, with NO variable interpolation.
+      #
+      # Compose interpolates $ in env_file VALUES, not just in `environment:`.
+      # The admin token is an Argon2 PHC string full of $-delimited fields, so
+      # the default parser ate every one of them and handed the container a
+      # 59-character fragment — from a file that was correct on disk. Nothing
+      # logs a warning; /admin just rejects the right password.
+      - path: ./vaultwarden.env
+        format: raw
     volumes:
       - ./data:/data
     # No `ports:`. Publishing 80 here would put an unauthenticated plaintext
@@ -26,7 +34,10 @@ services:
     container_name: vaultwarden-caddy
     restart: unless-stopped
     env_file:
-      - ./caddy.env
+      # raw here too. This token has no $ in it today, but the failure mode is
+      # silent and the cost of consistency is one line.
+      - path: ./caddy.env
+        format: raw
     ports:
       - "443:443"
       # HTTP/3. Caddy serves it by default and Bitwarden's mobile clients will

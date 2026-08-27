@@ -16,10 +16,18 @@
 #
 #   docker run --rm -it vaultwarden/server /vaultwarden hash
 #
-# It contains literal '$' characters. That is why the role writes it to an
-# env_file rather than into compose.yml's `environment:` — Compose interpolates
-# '$' there and would silently mangle the hash into something that never
-# matches, giving you an admin page that rejects the correct password.
+# It contains literal '$' characters, and two separate layers will eat them
+# unless stopped:
+#
+#   * GitHub Actions substitutes ${{ secrets.X }} into shell SOURCE, so a
+#     secret holding $ becomes variable expansions. Both workflows pass
+#     secrets through the environment instead.
+#   * Docker Compose interpolates $ in env_file VALUES, not only in
+#     `environment:`. The compose template declares `format: raw` for exactly
+#     this reason.
+#
+# Both failures are silent and produce the same symptom: an admin page that
+# rejects the correct password. Both were hit for real.
 svc_vaultwarden_admin_token: ""
 
 # Cloudflare API token used for the ACME DNS-01 challenge, so Let's Encrypt can
