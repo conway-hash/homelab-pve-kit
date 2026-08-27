@@ -33,8 +33,7 @@ service_enabled:
   # Its own guest, VM 998. Bookmarks, with floccus syncing the browser's own
   # bookmark tree both ways so they show up in Firefox and Chrome alike.
   #
-  # ⚠️ Ships OFF. It needs four secrets that only you can create (see
-  # docs/links.md), and turning it on before they exist gives you a deploy
-  # that fails at the first assert rather than a service. Add the secrets,
-  # then flip this to true.
-  links: false
+  # Turning this off DESTROYS VM 998 on the next run of the hypervisor play,
+  # disk and bookmarks included — and removes its nightly backup job with it.
+  # Use --check --diff first if you want warning. See docs/links.md.
+  links: true

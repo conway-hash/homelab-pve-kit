@@ -147,23 +147,32 @@ Linkwarden ships with registration **open**, which on a tailnet-reachable box
 means anything that joins can create itself an account. So this repo ships it
 **closed** — which also means your own first account cannot be created yet.
 
-One-time, in this order:
+This is done **on the guest, not through a commit**. The deploy's smoke test
+fails the run if it ever finds registration open, so opening it in git would
+turn CI red at exactly the middle step — and a repo that asks you to push a
+knowingly-red commit is a repo that teaches you to ignore red.
+
+The repo's declared state (`linkwarden_disable_registration: true`) is the
+safety net here: even if you walk away halfway through, the next Ansible run
+puts it back.
 
 ```bash
-# 1. Open registration, just long enough to make your account.
-$EDITOR ansible/group_vars/links_host/vars.yml   # linkwarden_disable_registration: false
-git commit -am 'links: open registration to create the first account' && git push
+ssh ci-deploy@links.ts.conway-hash.com
 
-# 2. Register at https://links.ts.conway-hash.com — the FIRST account is
-#    user id 1, which is what NEXT_PUBLIC_ADMIN=1 makes the administrator.
+# 1. Open registration, just long enough.
+sudo sed -i 's/^NEXT_PUBLIC_DISABLE_REGISTRATION=true/NEXT_PUBLIC_DISABLE_REGISTRATION=false/' \
+  /opt/linkwarden/linkwarden.env
+sudo systemctl restart linkwarden
 
-# 3. Close it again. Do not skip this.
-$EDITOR ansible/group_vars/links_host/vars.yml   # linkwarden_disable_registration: true
-git commit -am 'links: close registration' && git push
+# 2. Register at https://links.ts.conway-hash.com
+#    The FIRST account is user id 1, which NEXT_PUBLIC_ADMIN=1 makes the admin.
+
+# 3. Close it again. Do not skip this, and do not rely on the next deploy to
+#    do it for you.
+sudo sed -i 's/^NEXT_PUBLIC_DISABLE_REGISTRATION=false/NEXT_PUBLIC_DISABLE_REGISTRATION=true/' \
+  /opt/linkwarden/linkwarden.env
+sudo systemctl restart linkwarden
 ```
-
-The deploy's smoke test fails the run if registration is left open, so step 3
-is enforced rather than merely remembered.
 
 ## Importing your Google bookmarks
 
