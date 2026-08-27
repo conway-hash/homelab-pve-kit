@@ -559,15 +559,17 @@ const BK_WARN=36*3600, BK_BAD=72*3600;
 
 function backupLine(g){
   const b=g.backup;
-  if(g.template)
-    return `<div class="bk"><span class="k">backup</span>
-      <span class="bv" style="color:var(--dim)">n/a — template</span></div>`;
   if(!b||!b.last)
     return `<div class="bk"><span class="k">backup</span>
-      <span class="led"></span>
-      <span class="bv" style="color:var(--warn)">never</span></div>`;
+      <span class="led" style="background:${g.template?"var(--dim)":"var(--warn)"}"></span>
+      <span class="bv" style="color:${g.template?"var(--dim)":"var(--warn)"}">never</span></div>`;
   const age=(Date.now()/1000)-b.last, failed=b.ok===false;
-  const col=(failed||age>BK_BAD)?"var(--bad)":age>BK_WARN?"var(--warn)":"var(--good)";
+  // A template still gets swept up by a whole-node job, so it genuinely has
+  // archives and saying "n/a" would be a lie. But freshness is not a
+  // meaningful question about an image that changes once a year, so it is
+  // shown without a verdict — the facts, in grey, and no alert.
+  const col=g.template?"var(--dim)"
+    :(failed||age>BK_BAD)?"var(--bad)":age>BK_WARN?"var(--warn)":"var(--good)";
   const txt=failed
     ? `failed · last good ${dur(age)} ago`
     : `${dur(age)} ago · ${bytes(b.size)} · ${b.count} kept`;

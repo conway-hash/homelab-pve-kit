@@ -210,6 +210,11 @@ matters.
 The same conditions are raised in the **alerts** card, so a failed or missing
 backup is visible without hunting through the guest tabs.
 
+The cloud-init template is shown in grey with no verdict and raises no alert.
+A whole-node job does sweep it up, so it really does have archives and calling
+it "n/a" would be a lie — but "is this fresh" is not a meaningful question
+about an image that changes once a year.
+
 It reads two sources, because they answer different questions. The storage
 listing says what archives exist; the `vzdump` task log says whether the last
 attempt worked. **A failed backup leaves no archive behind**, so a storage
