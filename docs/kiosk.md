@@ -28,8 +28,8 @@ anyway, so nothing is gained by moving it off.
 
 ```
 kiosk.service     → kioskd.py: samples, keeps history, serves 127.0.0.1:8099
+                    and this host's tailnet address
 tty1 (autologin)  → cage -- cog http://127.0.0.1:8099/   (|| btop)
-kiosk-lofi.timer  → lofi.sh at 20:00, stopped by kiosk-lofi-stop.timer at 03:00
 ```
 
 ## Reading it from a phone or a laptop
@@ -64,8 +64,6 @@ be triggered from.
 |---|---|---|
 | `upgrade` | `127.0.0.1` | rewrites the host's packages |
 | `reboot` | `127.0.0.1` | takes every guest down with it |
-| `lofi-start` / `lofi-stop` | anywhere the page is | it is music |
-
 A remote viewer sees the upgrade and reboot buttons rendered as disabled and
 labelled "on the screen only" — the daemon tells the page which it is, rather
 than the page guessing and offering a button that answers 403. Without this,
@@ -202,82 +200,6 @@ post cannot set.
 
 ---
 
-## The lofi stream
-
-Off unless `kiosk_lofi_url` is set. With it set, `mpv` plays the stream
-audio-only at `kiosk_lofi_start`, from silence, climbing to
-`kiosk_lofi_volume` over `kiosk_lofi_ramp_minutes`, and stops at
-`kiosk_lofi_stop`. The header pill toggles it by hand.
-
-```yaml
-# ansible/group_vars/pve_host/vars.yml
-kiosk_lofi_url: "https://www.youtube.com/watch?v=..."
-kiosk_lofi_volume: 45
-kiosk_lofi_ramp_minutes: 15
-kiosk_lofi_alsa_device: "default"
-```
-
-Not in the browser: `cog` has exactly one window and the dashboard is in it,
-and WPE WebKit is a poor YouTube client — the player detects it and degrades or
-refuses. `mpv` execs `yt-dlp` to resolve the stream and plays the audio, which
-is the part actually wanted.
-
-This box has two sound cards: the motherboard's Realtek codec and the GPU's
-HDMI outputs. `aplay -l` lists them; set `kiosk_lofi_alsa_device` to the one
-your speakers are on.
-
-### yt-dlp does not come from apt
-
-Debian trixie ships `yt-dlp` 2025.04.30. Against the configured stream that
-version fails outright:
-
-```
-$ yt-dlp -f bestaudio https://www.youtube.com/watch?v=tRsQsTMvPNg
-ERROR: [youtube] tRsQsTMvPNg: The page needs to be reloaded.
-```
-
-while 2026.08.19 resolves the same URL to an audio-only format without
-complaint. YouTube moves faster than a stable release can follow, so the role
-installs a pinned upstream version into its own venv at `/opt/kiosk/ytdlp` and
-points mpv at it explicitly:
-
-```
---script-opts=ytdl_hook-ytdl_path=/opt/kiosk/ytdlp/bin/yt-dlp
-```
-
-A venv rather than `pip --break-system-packages`, because on a Proxmox host
-the system site-packages are what Proxmox's own tooling runs on. Nothing is
-put on `PATH`, so nothing shadows a system binary — and mpv is told the path
-rather than left to find one, since leaving it to `PATH` order is exactly how
-you end up silently back on Debian's copy.
-
-`kiosk_ytdlp_version` carries a `# renovate:` comment, so Renovate opens a PR
-when upstream moves. If the stream breaks before one lands, bump that var and
-re-converge:
-
-```bash
-$EDITOR ansible/group_vars/pve_host/vars.yml    # kiosk_ytdlp_version
-cd ansible && ansible-playbook site.yml --limit pve_host
-```
-
-The role bounces the stream with `systemctl try-restart` afterwards, so a bump
-takes effect immediately if it is currently playing and starts nothing if it
-is not.
-
-To check which end is broken:
-
-```bash
-ssh ci-deploy@pve.ts.conway-hash.com \
-  '/opt/kiosk/ytdlp/bin/yt-dlp -f bestaudio --get-format "<url>"'
-```
-
-A current yt-dlp also warns that no JavaScript runtime is installed and that
-some formats may therefore be missing. Audio-only extraction still works, so
-`deno` is deliberately not installed — it is a large dependency for a warning
-that does not currently cost anything.
-
----
-
 ## Before you turn it on
 
 Nothing. This service has no credentials and no prerequisites beyond the
@@ -316,12 +238,11 @@ So switching it off stops the kiosk being converged; it does not remove it.
 That takes one manual pass on the host:
 
 ```bash
-sudo systemctl disable --now kiosk.service kiosk-lofi.timer kiosk-lofi-stop.timer kiosk-lofi.service
-sudo rm -f /etc/systemd/system/kiosk.service /etc/systemd/system/kiosk-lofi*.service \
-           /etc/systemd/system/kiosk-lofi*.timer
+sudo systemctl disable --now kiosk.service
+sudo rm -f /etc/systemd/system/kiosk.service
 sudo systemctl daemon-reload
 sudo rm -rf /opt/kiosk
-sudo apt purge -y cage cog mpv alsa-utils   # jq and fonts-dejavu-core are worth keeping
+sudo apt purge -y cage cog                 # jq and fonts-dejavu-core are worth keeping
 ```
 
 ⚠️ Also strip the autologin stanza from `/root/.bash_profile` — the role adds

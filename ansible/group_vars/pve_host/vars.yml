@@ -85,8 +85,7 @@ kiosk_dir: /opt/kiosk
 # ⚠️ This does NOT make the reboot and upgrade buttons remotely usable. Those
 # are pinned to 127.0.0.1 inside the daemon, so the page is readable from
 # anywhere on the tailnet while the destructive actions still require the
-# keyboard physically wired to this box. Starting the lofi stream is allowed
-# from anywhere, being music.
+# keyboard physically wired to this box.
 kiosk_bind_tailnet: true
 
 # ── Sampling cadence ─────────────────────────────────────────────────
@@ -190,38 +189,6 @@ kiosk_net_scale_bytes: 13107200   # 12.5 MiB/s
 # subset of this one — a byte in the tunnel is counted again on the bridge,
 # encrypted — so graphing both draws the same traffic twice.
 kiosk_net_primary: vmbr0
-
-# ── The lofi stream ──────────────────────────────────────────────────
-#
-# mpv plays it audio-only, entirely outside the browser: WPE WebKit is a
-# poor YouTube client and cog only has the one window, which the dashboard
-# is already using.
-#
-# yt-dlp is NOT taken from apt, and this is not a preference. Debian trixie
-# ships 2025.04.30; tested against the stream below it fails outright with
-# "ERROR: [youtube] The page needs to be reloaded", where a current yt-dlp
-# resolves the same URL fine. YouTube changes faster than a stable release
-# can follow, so this pins an upstream version into its own venv instead.
-#
-# renovate: datasource=pypi depName=yt-dlp versioning=pep440
-kiosk_ytdlp_version: "2026.08.19"
-
-# <-- change this: the stream to play. Any URL yt-dlp understands.
-kiosk_lofi_url: "https://www.youtube.com/watch?v=tRsQsTMvPNg"
-
-# Local time it starts. Volume begins at zero and ramps to
-# kiosk_lofi_volume over kiosk_lofi_ramp_minutes, so it never starts at a
-# level that makes you jump.
-kiosk_lofi_start: "20:00"
-kiosk_lofi_stop: "03:00"
-kiosk_lofi_volume: 45
-kiosk_lofi_ramp_minutes: 15
-
-# ALSA device mpv plays to. This box has two cards — the Realtek codec on
-# the motherboard (card 1) and the GPU's HDMI outputs (card 0). Speakers
-# plugged into the motherboard want card 1; sound over the monitor's HDMI
-# wants card 0.
-kiosk_lofi_alsa_device: "default"
 
 # The Proxmox node name pvesh is queried for — not necessarily the same
 # string as the tailnet hostname, though here they both happen to be "pve".

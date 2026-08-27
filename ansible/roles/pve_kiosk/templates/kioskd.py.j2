@@ -50,13 +50,6 @@ HTTPS_HOSTS = {{ kiosk_https_check_hosts | to_json }}
 TAILNET_HIDE = {{ kiosk_tailnet_hide | to_json }}
 NODE_KINDS = {{ kiosk_node_kinds | to_json }}
 CONTROL_URL = "{{ headscale_server_url }}"
-LOFI = {
-    "url": {{ kiosk_lofi_url | to_json }},
-    "start": "{{ kiosk_lofi_start }}",
-    "stop": "{{ kiosk_lofi_stop }}",
-    "volume": {{ kiosk_lofi_volume }},
-    "ramp": {{ kiosk_lofi_ramp_minutes }},
-}
 
 # Guests this repo created carry a vmid at the top of the range and are
 # cloned from a template; guests someone clicked together in the web UI
@@ -965,29 +958,7 @@ def slow_tick():
             "reboot_pkgs": read("/var/run/reboot-required.pkgs").splitlines(),
             "pve_version": sh("pveversion").strip(),
             "logs": logs,
-            "lofi": lofi_state(),
         }
-
-
-# ── the lofi stream ──────────────────────────────────────────────────
-
-
-def lofi_state():
-    active = (
-        subprocess.run(
-            ["systemctl", "is-active", "--quiet", "kiosk-lofi.service"], check=False
-        ).returncode
-        == 0
-    )
-    return {
-        "playing": active,
-        "configured": bool(LOFI["url"]),
-        "start": LOFI["start"],
-        "stop": LOFI["stop"],
-        "volume": LOFI["volume"],
-        "ramp": LOFI["ramp"],
-        "now": read(f"{DIR}/lofi-now", ""),
-    }
 
 
 # ── actions the screen can take ──────────────────────────────────────
@@ -1041,9 +1012,9 @@ def run_action(name, argv):
 #               box. Anything that reboots the hypervisor or rewrites its
 #               packages lives here: serving the page to the tailnet must
 #               not quietly promote "on the VPN" to "may reboot the server".
-#   "tailnet" — anywhere the page itself is reachable from. Starting music
-#               is not in the same risk class as a reboot, and being able
-#               to start it from the sofa is the point of it.
+#   "tailnet" — anywhere the page itself is reachable from. Nothing claims
+#               this today; it exists so that adding a harmless action does
+#               not require re-deciding the whole model to do it.
 ACTIONS = {
     "upgrade": {
         "reach": "local",
@@ -1061,8 +1032,6 @@ ACTIONS = {
         ],
     },
     "reboot": {"reach": "local", "argv": ["systemctl", "reboot"]},
-    "lofi-start": {"reach": "tailnet", "argv": ["systemctl", "start", "kiosk-lofi.service"]},
-    "lofi-stop": {"reach": "tailnet", "argv": ["systemctl", "stop", "kiosk-lofi.service"]},
 }
 
 

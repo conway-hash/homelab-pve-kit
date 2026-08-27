@@ -12,15 +12,6 @@
   # starts it. Failing here would abort the play before it got there.
   failed_when: false
 
-# Two handlers on one topic, in order: find out whether the stream is
-# playing, then bounce it only if it is.
-#
-# The reason it is not simply `state: restarted` is that restarting a
-# stopped unit STARTS it — a converge at 2pm would begin playing music at
-# whatever volume the ramp last left, which is the exact surprise the ramp
-# exists to prevent. `systemctl try-restart` has these semantics in one
-# word, but reaching for it means the command module in place of a module
-# that exists, so this pays two tasks instead.
 - name: Show the new page on the screen
   # cog loads index.html once, at login, and never asks again — so a deploy
   # that changes the page leaves the monitor showing the previous one until
@@ -37,16 +28,3 @@
   ansible.builtin.systemd_service:
     name: getty@tty1.service
     state: restarted
-
-- name: Find out whether the lofi stream is playing
-  ansible.builtin.service_facts:
-  listen: Bounce a playing lofi stream
-
-- name: Restart the lofi stream if it is playing
-  ansible.builtin.systemd_service:
-    name: kiosk-lofi.service
-    state: restarted
-  when: >-
-    (ansible_facts.services | default({})).get('kiosk-lofi.service', {}).get('state')
-    == 'running'
-  listen: Bounce a playing lofi stream

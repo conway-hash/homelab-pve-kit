@@ -24,7 +24,9 @@
   # jq is no longer needed by this role — the collector is python now — but
   # it stays because removing a package a previous run installed is not
   # something a role should do behind your back, and it is generally useful
-  # on a hypervisor.
+  # on a hypervisor. The same goes for mpv, alsa-utils and python3-venv,
+  # which the retired lofi stream pulled in: its units and its pinned
+  # yt-dlp are removed below, the packages are left alone.
   #
   # install_recommends: false matters here; chromium's numbers above were
   # what made this worth measuring rather than assuming.
@@ -36,38 +38,6 @@
       - fonts-dejavu-core
     state: present
     install_recommends: false
-
-- name: Install the audio stack for the lofi stream
-  # Only when there is something to play. mpv drags in a media stack, and a
-  # box with kiosk_lofi_url unset has no use for it.
-  #
-  # yt-dlp is deliberately NOT in this list. Debian's is too old to play
-  # YouTube — see kiosk_ytdlp_version in group_vars for the measurement —
-  # so it comes from PyPI in the next task instead.
-  ansible.builtin.apt:
-    name:
-      - mpv
-      - alsa-utils
-      - python3-venv
-    state: present
-    install_recommends: false
-  when: kiosk_lofi_url | length > 0
-
-- name: Install yt-dlp from PyPI, pinned
-  # Its own venv, not --break-system-packages: this is a Proxmox host, and
-  # Proxmox's own tooling is the python3 site-packages you would be writing
-  # into. A directory under {{ kiosk_dir }} cannot affect it.
-  #
-  # mpv does not link yt-dlp, it execs it, so pointing mpv at this path is
-  # all that is needed — nothing goes on PATH and nothing shadows a system
-  # binary. Renovate opens a PR when upstream moves.
-  ansible.builtin.pip:
-    name: "yt-dlp=={{ kiosk_ytdlp_version }}"
-    virtualenv: "{{ kiosk_dir }}/ytdlp"
-    virtualenv_command: python3 -m venv
-    state: present
-  when: kiosk_lofi_url | length > 0
-  notify: Bounce a playing lofi stream
 
 - name: Create the kiosk directory
   ansible.builtin.file:
@@ -102,16 +72,6 @@
     - Restart the kiosk daemon
     - Show the new page on the screen
 
-- name: Install the lofi player
-  ansible.builtin.template:
-    src: lofi.sh.j2
-    dest: "{{ kiosk_dir }}/lofi.sh"
-    owner: root
-    group: root
-    mode: "0755"
-    validate: bash -n %s
-  when: kiosk_lofi_url | length > 0
-
 - name: Install the systemd units
   ansible.builtin.template:
     src: "{{ item }}.j2"
@@ -119,13 +79,8 @@
     owner: root
     group: root
     mode: "0644"
-  loop: "{{ ['kiosk.service'] + (lofi_units if kiosk_lofi_url | length > 0 else []) }}"
-  vars:
-    lofi_units:
-      - kiosk-lofi.service
-      - kiosk-lofi.timer
-      - kiosk-lofi-stop.service
-      - kiosk-lofi-stop.timer
+  loop:
+    - kiosk.service
   notify: Reload systemd
 
 - name: Retire the units the bash collector needed
@@ -143,6 +98,23 @@
     - kiosk-web.service
   failed_when: false
 
+- name: Retire the lofi stream
+  # Removing a feature from this repo does not remove it from the box:
+  # Ansible has no undo, and the timer an earlier run enabled would still
+  # fire at 20:00 tonight and start playing at a machine nobody asked. So
+  # the units are stopped and disabled explicitly rather than merely no
+  # longer written.
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - kiosk-lofi.timer
+    - kiosk-lofi-stop.timer
+    - kiosk-lofi.service
+    - kiosk-lofi-stop.service
+  failed_when: false
+
 - name: Remove the retired unit files and the collector
   ansible.builtin.file:
     path: "{{ item }}"
@@ -154,6 +126,14 @@
     - "{{ kiosk_dir }}/collect.sh"
     - "{{ kiosk_dir }}/data.json"
     - "{{ kiosk_dir }}/.netprev"
+    - /etc/systemd/system/kiosk-lofi.service
+    - /etc/systemd/system/kiosk-lofi.timer
+    - /etc/systemd/system/kiosk-lofi-stop.service
+    - /etc/systemd/system/kiosk-lofi-stop.timer
+    - "{{ kiosk_dir }}/lofi.sh"
+    - "{{ kiosk_dir }}/lofi-now"
+    # The pinned yt-dlp lived only here, so it goes with the feature.
+    - "{{ kiosk_dir }}/ytdlp"
   notify: Reload systemd
 
 - name: Reload systemd before enabling anything it has not seen yet
@@ -170,17 +150,6 @@
   # introduces it, which is the gating ansible-check job. Nothing was
   # installed in a dry run, so there is nothing here to preview.
   when: not ansible_check_mode
-
-- name: Enable the lofi timers
-  ansible.builtin.systemd_service:
-    name: "{{ item }}"
-    enabled: true
-    state: started
-  loop:
-    - kiosk-lofi.timer
-    - kiosk-lofi-stop.timer
-  # Same reason as the daemon above.
-  when: kiosk_lofi_url | length > 0 and not ansible_check_mode
 
 - name: Point tty1 at the kiosk instead of btop
   # tty1 already autologins root and runs btop from .bash_profile; this

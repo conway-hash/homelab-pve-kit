@@ -252,8 +252,6 @@ button.pill:hover{border-color:var(--fg)}
       <div class="pill"><span class="led" id="l_ctl"></span>headscale <b id="v_ctl">—</b></div>
       <div class="pill">uptime <b id="v_up">—</b></div>
       <div class="pill" id="p_boot" style="display:none"><span class="led warn"></span>reboot pending</div>
-      <button class="pill" id="p_lofi" data-lofi style="display:none">
-        <span class="led" id="l_lofi"></span>lofi <b id="v_lofi">—</b></button>
     </div>
     <div id="when">
       <div id="clock" class="mono">--:--:--</div>
@@ -695,12 +693,6 @@ function holdBtn(label,cls,action,note){
     <i></i><span>${esc(canControl?label:"on the screen only")}</span></button>`;
 }
 document.addEventListener("pointerdown",e=>{
-  const lofi=e.target.closest("[data-lofi]");
-  if(lofi){ fetch("/api/do",{method:"POST",
-      headers:{"X-Kiosk":"1","Content-Type":"application/json"},
-      body:JSON.stringify({action:lofi.dataset.on==="1"?"lofi-stop":"lofi-start"})})
-      .then(()=>setTimeout(slowTick,600)).catch(()=>{});
-    return; }
   const b=e.target.closest(".btn[data-act]"); if(!b||b.disabled)return;
   const fill=b.querySelector("i");
   fill.style.transition="width 1.4s linear"; fill.style.width="100%";
@@ -827,14 +819,6 @@ function renderSlow(d){
   $("v_ctl").textContent=d.control?.online?"online":"unreachable";
   $("l_ctl").className="led "+(d.control?.online?"ok":"bad");
   $("p_boot").style.display=d.reboot_required?"":"none";
-
-  const lo=d.lofi||{},pill=$("p_lofi");
-  pill.style.display=lo.configured?"":"none";
-  if(lo.configured){
-    pill.dataset.on=lo.playing?"1":"0";
-    $("l_lofi").className="led "+(lo.playing?"ok":"");
-    $("v_lofi").textContent=lo.playing?(lo.now||"playing"):`off · starts ${lo.start}`;
-  }
 }
 
 /* ── polling ──────────────────────────────────────────────────── */
