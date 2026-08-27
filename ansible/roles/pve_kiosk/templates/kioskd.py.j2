@@ -34,6 +34,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 NODE = "{{ pve_node }}"
 PORT = {{ kiosk_port }}
+# ternary, not to_json: to_json emits JSON's lowercase `true`, which is not
+# a Python literal. Every other value here happens to be a list, dict or
+# string, where JSON and Python agree — a bool is the one type where they
+# do not, and it fails at import rather than at the line that reads it.
+BIND_TAILNET = {{ kiosk_bind_tailnet | bool | ternary('True', 'False') }}
 DIR = "{{ kiosk_dir }}"
 FAST = {{ kiosk_fast_seconds }}
 GUEST = {{ kiosk_guest_seconds }}
@@ -383,11 +388,52 @@ def fast_tick():
             "per_core": pct[1:],
             "temps": temps,
             "mem": mem,
+            "mem_hw": MEMORY_HW,
             "gpu": gpu,
             "net": rates,
             "load": load,
             "uptime": uptime,
         }
+
+
+def memory_modules():
+    """The sticks actually in the slots, from SMBIOS.
+
+    Read once: swapping RAM is not something that happens while the daemon
+    is running, and dmidecode forks and parses the whole table.
+    """
+    mods, cur = [], {}
+    for line in sh("dmidecode", "-t", "memory", timeout=10).splitlines():
+        line = line.strip()
+        if line.startswith("Memory Device"):
+            if cur:
+                mods.append(cur)
+            cur = {}
+        elif ":" in line and cur is not None:
+            k, _, v = line.partition(":")
+            cur[k.strip()] = v.strip()
+    if cur:
+        mods.append(cur)
+
+    fitted = [m for m in mods if "No Module" not in m.get("Size", "No Module")]
+    if not fitted:
+        return {"label": "", "detail": ""}
+    first = fitted[0]
+    size = first.get("Size", "")
+    kind = first.get("Type", "")
+    # "Speed" is what the stick is rated for at JEDEC; "Configured Memory
+    # Speed" is what it is actually being clocked at. They differ whenever
+    # XMP/DOCP is off, and the configured one is the true number.
+    speed = first.get("Configured Memory Speed", first.get("Speed", ""))
+    speed = speed.replace(" MT/s", "")
+    part = first.get("Part Number", "").strip()
+    label = f"{len(fitted)} × {size} {kind}".strip()
+    if speed and speed.isdigit():
+        label += f"-{speed}"
+    return {"label": label, "detail": part, "slots": len(mods), "fitted": len(fitted)}
+
+
+MEMORY_HW = memory_modules()
 
 
 CPU_MODEL = next(
@@ -936,12 +982,22 @@ def lofi_state():
 
 # ── actions the screen can take ──────────────────────────────────────
 #
-# The whole security model is the bind address: the socket is on 127.0.0.1,
-# so reaching these means being root on this box already, or standing in
-# front of the monitor with the keyboard that is plugged into it. That is
-# the same bar as the physical power button, which does considerably more
-# damage. The page still makes each one a hold-to-confirm, because the
-# realistic accident is a cat on the keyboard, not an attacker.
+# The security model used to be the bind address alone: one socket on
+# 127.0.0.1 meant reaching these required being root on this box or standing
+# at the monitor — the same bar as the physical power button, which does
+# considerably more damage.
+#
+# Serving the page to the tailnet breaks that, so the check moved into the
+# handler. A request's source address decides what it may run: rebooting the
+# hypervisor still requires 127.0.0.1, while anything harmless is allowed
+# from wherever the page itself is readable. Without this, putting the
+# dashboard on the tailnet would have silently promoted "on the VPN" to
+# "may reboot the server", which is not a trade anyone chose.
+#
+# Each one is still a hold-to-confirm on the page, because the realistic
+# accident is a sleeve on the mouse, not an attacker.
+
+LOCAL = ("127.0.0.1", "::1")
 
 RUNNING = {}
 
@@ -969,26 +1025,34 @@ def run_action(name, argv):
     return True
 
 
+# Each action says how far away it may be triggered from.
+#
+#   "local"   — 127.0.0.1 only, i.e. the keyboard physically wired to this
+#               box. Anything that reboots the hypervisor or rewrites its
+#               packages lives here: serving the page to the tailnet must
+#               not quietly promote "on the VPN" to "may reboot the server".
+#   "tailnet" — anywhere the page itself is reachable from. Starting music
+#               is not in the same risk class as a reboot, and being able
+#               to start it from the sofa is the point of it.
 ACTIONS = {
-    # Everything apt can take without removing a package. This is the
-    # button for the class of update that was deliberately left out of
-    # unattended-upgrades: kernels, and Proxmox itself.
-    #
-    # `update` first, because the pending list this button acts on comes
-    # from a simulated run against whatever is in the cache — which may be
-    # a day old. --force-confold keeps config files you have edited rather
-    # than prompting, since there is nobody at a terminal to answer.
-    #
-    # A shell, uniquely here, because two commands have to run in order.
-    # The argv is a fixed literal; nothing from a request reaches it.
-    "upgrade": [
-        "/bin/sh",
-        "-c",
-        "apt-get update && apt-get -y -o Dpkg::Options::=--force-confold dist-upgrade",
-    ],
-    "reboot": ["systemctl", "reboot"],
-    "lofi-start": ["systemctl", "start", "kiosk-lofi.service"],
-    "lofi-stop": ["systemctl", "stop", "kiosk-lofi.service"],
+    "upgrade": {
+        "reach": "local",
+        # `update` first, because the pending list this button acts on comes
+        # from a simulated run against whatever is in the cache — which may
+        # be a day old. --force-confold keeps config files you have edited
+        # rather than prompting, since there is nobody at a terminal.
+        #
+        # A shell, uniquely here, because two commands have to run in order.
+        # The argv is a fixed literal; nothing from a request reaches it.
+        "argv": [
+            "/bin/sh",
+            "-c",
+            "apt-get update && apt-get -y -o Dpkg::Options::=--force-confold dist-upgrade",
+        ],
+    },
+    "reboot": {"reach": "local", "argv": ["systemctl", "reboot"]},
+    "lofi-start": {"reach": "tailnet", "argv": ["systemctl", "start", "kiosk-lofi.service"]},
+    "lofi-stop": {"reach": "tailnet", "argv": ["systemctl", "stop", "kiosk-lofi.service"]},
 }
 
 
@@ -1049,6 +1113,10 @@ class Handler(BaseHTTPRequestHandler):
                         "tailnet": ST.tailnet,
                         "actions": list(ST.actions)[:6],
                         "running": list(RUNNING),
+                        # Told, not guessed: the page greys out what this
+                        # viewer cannot do rather than offering a button
+                        # that answers 403.
+                        "local": self.client_address[0] in LOCAL,
                     }
                 )
             return
@@ -1069,10 +1137,16 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             body = {}
         name = body.get("action")
-        if name not in ACTIONS:
+        spec = ACTIONS.get(name)
+        if not spec:
             self.send_json({"error": "unknown action"}, 400)
             return
-        self.send_json({"started": run_action(name, ACTIONS[name]), "action": name})
+        if spec["reach"] == "local" and self.client_address[0] not in LOCAL:
+            self.send_json(
+                {"error": f"{name} can only be run from the machine itself"}, 403
+            )
+            return
+        self.send_json({"started": run_action(name, spec["argv"]), "action": name})
 
     def serve_file(self, path):
         name = "index.html" if path in ("/", "") else os.path.basename(path)
@@ -1089,6 +1163,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+
+def tailnet_address():
+    """This host's own tailnet IPv4, or None if it is not on the tailnet.
+
+    Read from tailscaled rather than assumed, so the address is never a
+    second copy of a fact that lives somewhere else and can drift.
+    """
+    raw = sh("tailscale", "ip", "-4", timeout=6).strip()
+    return raw.splitlines()[0].strip() if raw else None
 
 
 def loop(fn, every, name):
@@ -1112,10 +1196,36 @@ def main():
     # The first slow pass shells out to apt and probes every peer, which
     # takes a few seconds; serving starts immediately and those panels fill
     # in when it lands, rather than holding the page back.
-    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    srv.daemon_threads = True
-    print(f"kioskd listening on 127.0.0.1:{PORT}", flush=True)
-    srv.serve_forever()
+    binds = ["127.0.0.1"]
+    if BIND_TAILNET:
+        # The tailnet address specifically, NOT 0.0.0.0. This box's other
+        # interface is the LAN bridge every guest and every device in the
+        # house sits on; binding everything would publish the dashboard
+        # there too, to anything that joined the wifi. Tailscale's address
+        # is the one where being able to reach it already means something.
+        addr = tailnet_address()
+        if addr:
+            binds.append(addr)
+        else:
+            print("no tailscale0 address yet — serving on localhost only",
+                  flush=True)
+
+    servers = []
+    for host in binds:
+        try:
+            srv = ThreadingHTTPServer((host, PORT), Handler)
+        except OSError as exc:
+            print(f"cannot bind {host}:{PORT}: {exc}", flush=True)
+            continue
+        srv.daemon_threads = True
+        servers.append(srv)
+        print(f"kioskd listening on {host}:{PORT}", flush=True)
+
+    if not servers:
+        raise SystemExit("nothing to serve on")
+    for srv in servers[1:]:
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+    servers[0].serve_forever()
 
 
 if __name__ == "__main__":

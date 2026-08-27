@@ -69,6 +69,26 @@ pve_repositories:
 kiosk_port: 8099
 kiosk_dir: /opt/kiosk
 
+# Also serve the dashboard on this host's tailnet address, so it can be read
+# from a phone or a laptop at http://<host>.<tailnet_base_domain>:8099.
+#
+# The tailnet address specifically, never 0.0.0.0: the other interface is the
+# LAN bridge every guest and every device in the house sits on, and binding
+# everything would publish this to anything that joined the wifi. On the
+# tailnet, being able to reach it already means something.
+#
+# No TLS. The tunnel already encrypts and authenticates at the WireGuard
+# layer, so a certificate here is a second lock on the same door — and this
+# repo's own rule is that a device wanting an HTTPS front door gets its own
+# Caddy, which is a deliberate decision rather than a default.
+#
+# ⚠️ This does NOT make the reboot and upgrade buttons remotely usable. Those
+# are pinned to 127.0.0.1 inside the daemon, so the page is readable from
+# anywhere on the tailnet while the destructive actions still require the
+# keyboard physically wired to this box. Starting the lofi stream is allowed
+# from anywhere, being music.
+kiosk_bind_tailnet: true
+
 # ── Sampling cadence ─────────────────────────────────────────────────
 #
 # Three tiers, because the sources cost wildly different amounts. The old
@@ -101,11 +121,16 @@ kiosk_history_points: 600
 
 # ── What the screen shows ────────────────────────────────────────────
 
-# Quiet time before the mouse pointer is hidden. The guest tabs used to
-# rotate on a timer too; that is gone. A screen that changes on its own is
-# one you can never look away from and come back to, and picking the tab is
-# a keypress away (1/2/3, or the arrows).
-kiosk_idle_seconds: 45
+# How often the page asks for new data. NOT how often the box is sampled —
+# that stays kiosk_fast_seconds. The daemon hands back everything since the
+# sequence the page last saw, so one request every 5s still returns five
+# one-second samples and the graphs keep their resolution at a fifth of the
+# requests.
+kiosk_poll_seconds: 5
+
+# The pointer used to hide itself after a spell of inactivity. Removed: with
+# a mouse actually plugged in, an invisible cursor you have to move blindly
+# to summon back is worse than a visible one nobody is looking at.
 
 # The GPU's real product name. PCI ID 1002:67df is shared by the whole
 # RX 470/480/570/580/590 family, so no amount of reading sysfs can narrow

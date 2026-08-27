@@ -17,7 +17,7 @@ service_enabled:
 | Role | `pve_kiosk` |
 | Settings | `ansible/group_vars/pve_host/vars.yml` |
 | Secrets | none |
-| Reachable at | the attached screen, and `127.0.0.1:8099` on the host |
+| Reachable at | the attached screen, `127.0.0.1:8099` on the host, and `http://pve.ts.conway-hash.com:8099` from the tailnet |
 
 ## Why it runs on the hypervisor
 
@@ -32,8 +32,45 @@ tty1 (autologin)  → cage -- cog http://127.0.0.1:8099/   (|| btop)
 kiosk-lofi.timer  → lofi.sh at 20:00, stopped by kiosk-lofi-stop.timer at 03:00
 ```
 
-Nothing is served off-box: the daemon binds `127.0.0.1` only, so there is no
-port to firewall.
+## Reading it from a phone or a laptop
+
+With `kiosk_bind_tailnet: true` the daemon binds its own tailnet address as
+well as localhost, so the same page is at
+`http://pve.ts.conway-hash.com:8099` from anything on the tailnet. Below about
+900px wide the four-column grid collapses to a single scrolling column — same
+content, same page, no separate mobile view to keep in step.
+
+The tailnet address specifically, **never `0.0.0.0`**. The other interface is
+`vmbr0`, the bridge every guest and every device in the house sits on;
+binding everything would publish the dashboard to anything that joined the
+wifi. On the tailnet, being able to reach it already means something.
+
+No TLS, deliberately. WireGuard already encrypts and authenticates the
+tunnel, so a certificate here is a second lock on the same door — and this
+repo's rule is that a device wanting a real HTTPS front door gets its own
+Caddy, which is a decision to take on purpose rather than a default to drift
+into.
+
+### What a remote viewer cannot do
+
+The security model used to be the bind address alone: one socket on
+`127.0.0.1` meant reaching the action endpoints required being root on the
+box or standing at the monitor — the same bar as the power button, which does
+considerably more damage. Serving the page to the tailnet breaks that, so the
+check moved into the daemon and each action now declares how far away it may
+be triggered from.
+
+| Action | Reach | Why |
+|---|---|---|
+| `upgrade` | `127.0.0.1` | rewrites the host's packages |
+| `reboot` | `127.0.0.1` | takes every guest down with it |
+| `lofi-start` / `lofi-stop` | anywhere the page is | it is music |
+
+A remote viewer sees the upgrade and reboot buttons rendered as disabled and
+labelled "on the screen only" — the daemon tells the page which it is, rather
+than the page guessing and offering a button that answers 403. Without this,
+putting the dashboard on the tailnet would have silently promoted "on the
+VPN" to "may reboot the server".
 
 `cog`, not chromium: Debian's chromium pulls 174 packages onto a hypervisor,
 and even with recommends disabled still installs `cups-common`,
@@ -60,6 +97,12 @@ lines over.
 | guest | `kiosk_guest_seconds` (5s) | `pvesh` guest list, and `status/current` per running guest |
 | agent | `kiosk_agent_seconds` (20s) | `qm guest exec … docker ps` and `qm agent … get-fsinfo` inside each guest |
 | slow | `kiosk_slow_seconds` (60s) | tailscale, HTTPS probes, `apt-get -s dist-upgrade`, failed units, PVE tasks, journal |
+
+`kiosk_poll_seconds` (5s) is a different thing: how often the *page* asks, not
+how often the box is sampled. The daemon returns everything since the sequence
+the page last saw, so one request every five seconds still hands back five
+one-second samples — the graphs keep their resolution at a fifth of the
+requests.
 
 History is a ring buffer in the daemon's memory — `kiosk_history_points`
 samples per series, 600 by default, which at a 1s tick is a 10-minute window.
