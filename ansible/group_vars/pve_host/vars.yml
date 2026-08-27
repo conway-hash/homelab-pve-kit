@@ -113,6 +113,14 @@ kiosk_guest_seconds: 20
 # here and the answer changes rarely.
 kiosk_agent_seconds: 20
 
+# Backup state per guest: newest archive on every backup-capable storage,
+# plus the newest vzdump task so a FAILED job is visible and not just a
+# stale-looking success. Two pvesh calls per storage, and the answer moves
+# once a night at 03:30 — so this is minutes, not seconds. Five is short
+# enough that a manual `vzdump` shows up on the screen while you are still
+# standing in front of it.
+kiosk_backup_seconds: 300
+
 # Tailnet, HTTPS probes, pending apt updates, failed units, PVE task log.
 # All either shell out or touch the network.
 kiosk_slow_seconds: 60

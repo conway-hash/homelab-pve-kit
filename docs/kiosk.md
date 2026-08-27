@@ -80,7 +80,7 @@ never goes blank.
 
 ---
 
-## One daemon, three clocks
+## One daemon, four clocks
 
 `kioskd.py` replaced a bash `collect.sh` on a 10s systemd timer plus
 `python3 -m http.server`. A timer has exactly one interval, so everything ran
@@ -94,6 +94,7 @@ lines over.
 | fast | `kiosk_fast_seconds` (1s) | `/proc/stat` per core, `/proc/meminfo`, `/proc/net/dev`, `k10temp`, `amdgpu` sysfs |
 | guest | `kiosk_guest_seconds` (5s) | `pvesh` guest list, and `status/current` per running guest |
 | agent | `kiosk_agent_seconds` (20s) | `qm guest exec … docker ps` and `qm agent … get-fsinfo` inside each guest |
+| backup | `kiosk_backup_seconds` (300s) | archives on every backup-capable storage, and the `vzdump` task log |
 | slow | `kiosk_slow_seconds` (60s) | tailscale, HTTPS probes, `apt-get -s dist-upgrade`, failed units, PVE tasks, journal |
 
 `kiosk_poll_seconds` (5s) is a different thing: how often the *page* asks, not
@@ -183,6 +184,42 @@ docker ps`. No SSH, no key, and no listening port in the guest: the channel is
 a virtio serial device, so it works on a guest that has fallen off the network
 entirely. It does run as root inside the guest, which is why the only things
 sent through it are read-only listings.
+
+## The backup row on each guest card
+
+Every guest card ends with a `backup` line, below a divider: the resource rows
+above it answer "how is it doing right now", and this one answers "could you
+get it back" — a different question, and on a password vault the more
+important one.
+
+```
+backup   ●  6h ago · 1.7G · 7 kept
+```
+
+| Colour | Means |
+|---|---|
+| green | newest archive under 36h old, last `vzdump` succeeded |
+| amber | 36–72h old, or no archive has ever been taken |
+| red | over 72h old, or the last `vzdump` for that guest **failed** |
+
+36h rather than 24h on purpose. A nightly job, a slow archive and a little
+clock drift still leave a perfectly healthy guest at hour 25, and an indicator
+that goes amber on an ordinary night is one nobody reads on the night it
+matters.
+
+The same conditions are raised in the **alerts** card, so a failed or missing
+backup is visible without hunting through the guest tabs.
+
+It reads two sources, because they answer different questions. The storage
+listing says what archives exist; the `vzdump` task log says whether the last
+attempt worked. **A failed backup leaves no archive behind**, so a storage
+listing alone cannot see a failure at all — it just keeps showing the last
+success, which is the most dangerous thing a backup indicator can do.
+
+The one gap: a whole-node job (`vzdump --all`) writes its task with an empty
+guest id, so a failure there cannot be attributed to a single guest and will
+not colour a card. Those still appear, in red, in the **logs** card — which
+draws any failed Proxmox task that way already.
 
 ## The approve buttons
 

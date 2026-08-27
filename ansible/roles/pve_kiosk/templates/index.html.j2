@@ -139,6 +139,15 @@ button.pill:hover{border-color:var(--fg)}
 .tag{font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:var(--mut);
      border:1px solid var(--line);border-radius:4px;padding:0 5px}
 .gdns{font-size:10px;color:var(--dim);margin-bottom:7px}
+/* Divided off from the resource rows above it: those are "how is it doing
+   right now", this is "could you get it back". Different question, and on a
+   password vault the more important one. */
+.bk{display:flex;align-items:center;gap:7px;margin-top:8px;padding-top:8px;
+    border-top:1px solid var(--line)}
+.bk .k{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut)}
+.bk .bv{font-size:10.5px;margin-left:auto;
+        font-family:"DejaVu Sans Mono",ui-monospace,monospace;
+        font-variant-numeric:tabular-nums}
 /* label · percent · bar · ceiling. The ceiling column is sized to content
    and right-aligned, so rows line up and nothing stretches. */
 .vrow{display:grid;grid-template-columns:30px 40px minmax(0,1fr) auto;
@@ -542,6 +551,31 @@ $("tabs").addEventListener("pointerdown",e=>{
   tab=b.dataset.tab; paintTabs(); renderGuests();
 });
 
+/* Green under 36h, not 24h. A nightly job plus a slow archive plus a little
+   clock drift is still perfectly healthy at hour 25, and an indicator that
+   goes amber on an ordinary night is one nobody reads on the night it
+   matters. */
+const BK_WARN=36*3600, BK_BAD=72*3600;
+
+function backupLine(g){
+  const b=g.backup;
+  if(g.template)
+    return `<div class="bk"><span class="k">backup</span>
+      <span class="bv" style="color:var(--dim)">n/a — template</span></div>`;
+  if(!b||!b.last)
+    return `<div class="bk"><span class="k">backup</span>
+      <span class="led"></span>
+      <span class="bv" style="color:var(--warn)">never</span></div>`;
+  const age=(Date.now()/1000)-b.last, failed=b.ok===false;
+  const col=(failed||age>BK_BAD)?"var(--bad)":age>BK_WARN?"var(--warn)":"var(--good)";
+  const txt=failed
+    ? `failed · last good ${dur(age)} ago`
+    : `${dur(age)} ago · ${bytes(b.size)} · ${b.count} kept`;
+  return `<div class="bk"><span class="k">backup</span>
+    <span class="led" style="background:${col}"></span>
+    <span class="bv" style="color:${col==="var(--good)"?"var(--mut)":col}">${txt}</span></div>`;
+}
+
 function guestCard(g){
   const on=g.running, m=g.memory||{}, mp=pc(m.used,m.total), a=g.alloc||{};
   const fs=(g.fs||[]).filter(f=>f.mount==="/")[0]||(g.fs||[])[0];
@@ -568,7 +602,7 @@ function guestCard(g){
         (m.source==="host-rss"?`<div class="gdns" style="color:var(--warn);margin-top:6px">
            no balloon driver — this is the QEMU process's host memory, which overstates it</div>`:"")+
         (ctrs?`<div class="ctrs">${ctrs}</div>`:"")
-      :"")+`</div>`;
+      :"")+backupLine(g)+`</div>`;
 }
 
 function renderGuests(){
@@ -731,6 +765,26 @@ function renderAlerts(d){
       if(c.state!=="running")add("!","var(--warn)",`${esc(c.name)} ${esc(c.state)}`,`on ${esc(g.name)}`);
       else if(c.warn)add("!","var(--warn)",`${esc(c.name)} ${esc(c.health)}`,`on ${esc(g.name)}`);
     });
+  });
+
+  (d.guests||[]).forEach(g=>{
+    if(g.template)return;                 // nobody backs up a cloud-init template
+    const b=g.backup;
+    if(!b||!b.last){
+      add("!","var(--warn)",`${esc(g.name)} has never been backed up`,
+          "there is nothing to restore from");
+      return;
+    }
+    const age=(Date.now()/1000)-b.last;
+    if(b.ok===false)
+      add("✕","var(--bad)",`${esc(g.name)} backup FAILED`,
+          esc(String(b.status||"").slice(0,90)));
+    else if(age>BK_BAD)
+      add("✕","var(--bad)",`${esc(g.name)} backup is ${dur(age)} old`,
+          "the nightly job has not run");
+    else if(age>BK_WARN)
+      add("!","var(--warn)",`${esc(g.name)} backup is ${dur(age)} old`,
+          "one is expected every night");
   });
 
   (d.tailnet?.nodes||[]).forEach(n=>{

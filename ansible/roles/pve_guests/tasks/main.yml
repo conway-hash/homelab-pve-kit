@@ -162,6 +162,35 @@
   loop_control:
     label: "{{ item.name }} (vmid {{ item.vmid }})"
 
+# ── Knowing what is already true ─────────────────────────────────────
+#
+# Read before writing, so the two tasks below can tell "I changed something"
+# from "I ran". Without this, `Configure` reported `changed` on every single
+# run — proxmox_kvm in update mode does not diff, it just applies — and
+# `Resize` did too. Two tasks permanently yellow is two tasks nobody looks at,
+# which is how a genuinely surprising change gets to hide in plain sight.
+
+- name: Read the enabled guests' current config
+  ansible.builtin.command: >-
+    pvesh get /nodes/{{ pve_node }}/qemu/{{ item.vmid }}/config
+    --output-format json
+  register: pve_guests_config
+  changed_when: false
+  # Read-only, and needed under --check too: without it the tasks below have
+  # no stdout to compare against and a dry run reports changes it would not
+  # actually make.
+  check_mode: false
+  loop: "{{ pve_guests_on }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Index the current configs by vmid
+  ansible.builtin.set_fact:
+    pve_guests_cfg: >-
+      {{ dict(pve_guests_config.results | map(attribute='item.vmid')
+              | zip(pve_guests_config.results | map(attribute='stdout')
+                    | map('from_json'))) }}
+
 - name: Configure the enabled guests
   # A separate call from the clone: the module cannot clone and update in one
   # pass, and this is also what makes a change to cores/memory/watchdog apply
@@ -205,6 +234,28 @@
   loop: "{{ pve_guests_on }}"
   loop_control:
     label: "{{ item.name }}"
+  vars:
+    _now: "{{ pve_guests_cfg[item.vmid] | default({}) }}"
+  # Deliberately NOT a `when:`. The module still runs every time, so this
+  # cannot skip a change that was actually needed — the comparison only
+  # decides what to REPORT. Getting that backwards would trade a cosmetic
+  # annoyance for a silent failure to converge, which is a much worse bug.
+  #
+  # Proxmox is inconsistent about types here — cores comes back as an int and
+  # memory as a string — so both sides are cast rather than trusted.
+  changed_when: >-
+    _now.cores | default(0) | int != item.cores | int
+    or _now.memory | default(0) | int != item.memory_mb | int
+    or _now.onboot | default(0) | int != 1
+    or _now.agent | default('') != 'enabled=1'
+    or _now.watchdog | default('') != 'model=i6300esb,action=reset'
+    or _now.startup | default('') !=
+       'order=' ~ item.startup_order ~ ',up=' ~ pve_guest_up_delay ~
+       ',down=' ~ pve_guest_down_delay
+    or _now.ciuser | default('') != 'ci-deploy'
+    or _now.ipconfig0 | default('') !=
+       'ip=' ~ item.ipv4 ~ '/' ~ pve_lan_cidr_prefix ~ ',gw=' ~ pve_lan_gateway
+    or _now.nameserver | default('') != pve_lan_dns_servers | string
 
 - name: Resize the enabled guests' disks
   # The template's disk is whatever the cloud image shipped (2GB or so). Growing
@@ -212,14 +263,26 @@
   # refuses to shrink, which is the correct refusal.
   ansible.builtin.command: >-
     qm resize {{ item.vmid }} scsi0 {{ item.disk_gb }}G
-  register: pve_guests_resize
-  changed_when: "'no need to shrink' not in (pve_guests_resize.stderr | default(''))"
-  failed_when:
-    - pve_guests_resize.rc != 0
-    - "'shrink' not in (pve_guests_resize.stderr | default(''))"
   loop: "{{ pve_guests_on }}"
   loop_control:
     label: "{{ item.name }} → {{ item.disk_gb }}G"
+  vars:
+    # `size=20G` out of `local-lvm:vm-999-disk-0,discard=on,size=20G,ssd=1`.
+    # An unparseable or absent size yields 0, which resizes — the safe
+    # direction to fail in, since `qm resize` refuses to shrink anyway and a
+    # needless grow-to-the-same-size is harmless where a skipped grow is not.
+    #    `or [0]` rather than a trailing `| default(0)`: regex_search returns
+    #    None on no match, and `first` RAISES on None instead of falling
+    #    through to a default — so the default has to be applied before it.
+    _now_gb: >-
+      {{ ((pve_guests_cfg[item.vmid] | default({}) ).scsi0 | default('')
+          | regex_search('size=(\d+)G', '\1') or [0]) | first }}
+  # This replaces a `changed_when` that matched on the text of an ERROR
+  # message ("no need to shrink"), which meant the task ran a real resize
+  # every time and inferred idempotency from whether it was rejected. Asking
+  # the config first is both cheaper and honest.
+  when: _now_gb | int < item.disk_gb | int
+  changed_when: true
 
 - name: Start the enabled guests
   community.proxmox.proxmox_kvm:

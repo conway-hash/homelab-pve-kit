@@ -43,6 +43,12 @@ DIR = "{{ kiosk_dir }}"
 FAST = {{ kiosk_fast_seconds }}
 GUEST = {{ kiosk_guest_seconds }}
 AGENT = {{ kiosk_agent_seconds }}
+
+# Backups move once a night. Re-listing every archive on every guest tick
+# would spend two pvesh calls each {{ kiosk_guest_seconds }}s re-reading a
+# directory that changes at 03:30, so this rides the guest tick on its own
+# much slower clock — the same arrangement AGENT already uses above.
+BACKUP = {{ kiosk_backup_seconds }}
 SLOW = {{ kiosk_slow_seconds }}
 KEEP = {{ kiosk_history_points }}
 GPU_NAME_OVERRIDE = {{ kiosk_gpu_name | to_json }}
@@ -577,10 +583,74 @@ def classify(g):
 
 AGENT_CACHE = {}
 AGENT_LAST = 0.0
+BACKUP_CACHE = {}
+BACKUP_LAST = 0.0
+
+
+def backup_tick():
+    """Newest archive per guest, and whether the last attempt actually worked.
+
+    Those are two different questions, and answering only the first is the
+    dangerous kind of reassuring: an archive from Tuesday looks fine on its
+    own and looks very different beside a job that has failed every night
+    since. A failed vzdump leaves NO archive behind, so a storage listing
+    cannot see the failure at all — it just keeps showing the last success.
+    Hence both sources: the storage for what exists, the task log for what
+    happened.
+    """
+    out = {}
+
+    # Every storage that can hold a backup, rather than a hardcoded name.
+    # Which one the job writes to is a var (pve_backup_storage), and a kiosk
+    # that only knew today's answer would quietly report "never backed up"
+    # the day that var changed — which is exactly when you would want it to
+    # be telling the truth.
+    for store in pvesh(f"/nodes/{NODE}/storage", "--content", "backup",
+                       timeout=15) or []:
+        sid = store.get("storage")
+        if not sid or not store.get("active", 1):
+            continue
+        for vol in pvesh(f"/nodes/{NODE}/storage/{sid}/content",
+                         "--content", "backup", timeout=20) or []:
+            try:
+                vmid = int(vol.get("vmid"))
+            except (TypeError, ValueError):
+                continue
+            e = out.setdefault(vmid, {"count": 0, "last": 0, "size": 0,
+                                      "storage": sid})
+            e["count"] += 1
+            if (vol.get("ctime") or 0) > e["last"]:
+                e["last"] = vol.get("ctime") or 0
+                e["size"] = vol.get("size") or 0
+                e["storage"] = sid
+
+    # Failure detection. Note this only attributes per-guest jobs: a
+    # whole-node job (`--all`) writes its task with an EMPTY id, so a failure
+    # there cannot be pinned to one guest and is deliberately left to the
+    # logs card, which already draws any failed task in red.
+    for t in pvesh(f"/nodes/{NODE}/tasks", "--typefilter", "vzdump",
+                   "--limit", "60", timeout=15) or []:
+        try:
+            vmid = int(t.get("id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not vmid:
+            continue
+        e = out.setdefault(vmid, {"count": 0, "last": 0, "size": 0,
+                                  "storage": None})
+        if (t.get("starttime") or 0) >= e.get("task_t", 0):
+            e["task_t"] = t.get("starttime") or 0
+            # Proxmox writes "OK" on success and the error text otherwise, and
+            # leaves status unset while a task is still running — which is not
+            # a failure, just an answer that has not arrived yet.
+            e["status"] = t.get("status") or "running"
+            e["ok"] = e["status"] in ("OK", "running")
+
+    return out
 
 
 def guest_tick():
-    global AGENT_LAST
+    global AGENT_LAST, BACKUP_CACHE, BACKUP_LAST
     # ONE call, not two. /nodes/<n>/qemu and /nodes/<n>/lxc each cost about
     # 0.7s of CPU — pvesh is a Perl CLI that stands the whole Proxmox API
     # stack up per invocation — and /cluster/resources returns both kinds
@@ -588,6 +658,9 @@ def guest_tick():
     # calls were 1.4s of CPU per tick for information one call already had.
     everything = pvesh("/cluster/resources", "--type", "vm", timeout=15) or []
     do_agent = time.time() - AGENT_LAST >= AGENT
+    if time.time() - BACKUP_LAST >= BACKUP:
+        BACKUP_CACHE = backup_tick()
+        BACKUP_LAST = time.time()
 
     rows = []
     for g in everything:
@@ -618,6 +691,14 @@ def guest_tick():
             },
             "cpu": round((g.get("cpu") or 0) * 100, 1),
             "net": {"rx": g.get("netin", 0), "tx": g.get("netout", 0)},
+            # Outside the `running` branch below on purpose: whether a machine
+            # has a recent backup matters most when it is NOT running, which is
+            # precisely when a card that only fills itself in for live guests
+            # would go blank.
+            "backup": BACKUP_CACHE.get(vmid),
+            # The cloud-init template is a guest to Proxmox and is not a thing
+            # anyone backs up. Carried so the UI can decline to nag about it.
+            "template": bool(g.get("template")),
         }
         if running and not is_lxc:
             row["memory"] = guest_memory(vmid, g.get("mem", 0))
