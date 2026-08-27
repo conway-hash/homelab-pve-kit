@@ -100,9 +100,13 @@ kiosk_bind_tailnet: true
 # staircase.
 kiosk_fast_seconds: 1
 
-# Guests, via the Proxmox API. One list call plus one status call per
-# guest, each around 150ms.
-kiosk_guest_seconds: 5
+# Guests, via the Proxmox API. Measured on this box, each `pvesh` invocation
+# costs about 0.7s of CPU — it is a Perl CLI that stands the whole Proxmox API
+# stack up every time — so this interval is not free the way the /proc reads
+# are. At 5s it burned roughly half a core continuously, which is an absurd
+# price for a dashboard on a hypervisor. Guest figures do not meaningfully
+# change inside 20s.
+kiosk_guest_seconds: 20
 
 # Guest introspection over the QEMU guest agent — filesystem usage and the
 # container list inside each VM. Deliberately slower than the guest poll:

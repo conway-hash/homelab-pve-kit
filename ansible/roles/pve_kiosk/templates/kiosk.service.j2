@@ -20,9 +20,13 @@ RestartSec=3
 # actions all require it. The exposure is bounded by the bind address —
 # the socket is on 127.0.0.1 and nothing forwards it.
 User=root
-# A sampler that leaks would take the hypervisor's RAM with it. 300M is
-# roughly 10x the resident size of a full history window.
-MemoryMax=300M
+# A sampler that leaks would take the hypervisor's RAM with it. The python
+# process itself is about 30M with a full history window; the rest of this
+# is the children, which the cgroup accounts for too — `apt-get -s
+# dist-upgrade` alone peaks around 90M. Measured peak was 289M against an
+# earlier 300M cap, which is close enough that a larger upgrade transaction
+# would have started failing silently.
+MemoryMax=512M
 # The one file it writes is the now-playing line the lofi player leaves.
 ProtectHome=yes
 NoNewPrivileges=yes

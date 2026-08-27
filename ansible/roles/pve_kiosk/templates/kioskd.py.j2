@@ -588,18 +588,27 @@ AGENT_LAST = 0.0
 
 def guest_tick():
     global AGENT_LAST
-    qemu = pvesh(f"/nodes/{NODE}/qemu", timeout=15) or []
-    lxc = pvesh(f"/nodes/{NODE}/lxc", timeout=15) or []
+    # ONE call, not two. /nodes/<n>/qemu and /nodes/<n>/lxc each cost about
+    # 0.7s of CPU — pvesh is a Perl CLI that stands the whole Proxmox API
+    # stack up per invocation — and /cluster/resources returns both kinds
+    # together with every field used below. On a single node the two list
+    # calls were 1.4s of CPU per tick for information one call already had.
+    everything = pvesh("/cluster/resources", "--type", "vm", timeout=15) or []
     do_agent = time.time() - AGENT_LAST >= AGENT
 
     rows = []
-    for g in qemu + [dict(x, _lxc=True) for x in lxc]:
+    for g in everything:
+        # /cluster/resources answers for the whole cluster. There is one node
+        # here, but filtering means that stays true if there is ever a second.
+        if g.get("node") not in (None, NODE):
+            continue
         vmid = g.get("vmid")
         running = g.get("status") == "running"
+        is_lxc = g.get("type") == "lxc"
         row = {
             "vmid": vmid,
             "name": g.get("name") or str(vmid),
-            "kind": "ct" if g.get("_lxc") else "vm",
+            "kind": "ct" if is_lxc else "vm",
             "group": classify(g),
             "status": g.get("status", "unknown"),
             "running": running,
@@ -609,14 +618,15 @@ def guest_tick():
             # or not the guest is on. The graphs show consumption against
             # these ceilings.
             "alloc": {
-                "cores": g.get("cpus", 0),
+                # maxcpu here, where the per-node endpoint called it cpus.
+                "cores": g.get("maxcpu", 0),
                 "memory": g.get("maxmem", 0),
                 "disk": g.get("maxdisk", 0),
             },
             "cpu": round((g.get("cpu") or 0) * 100, 1),
             "net": {"rx": g.get("netin", 0), "tx": g.get("netout", 0)},
         }
-        if running and not g.get("_lxc"):
+        if running and not is_lxc:
             row["memory"] = guest_memory(vmid, g.get("mem", 0))
             if do_agent:
                 AGENT_CACHE[vmid] = {
