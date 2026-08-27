@@ -1,0 +1,84 @@
+---
+# The links guest — Linkwarden behind its own Caddy.
+#
+# A VM, not an LXC container, for the same reason as the vault: Tailscale and
+# Docker both need special-casing inside an unprivileged container, and the
+# usual workaround — running it privileged — removes the isolation boundary.
+# Created by the pve_guests role.
+
+# Derived from the golden-base fact rather than written out, so this guest's
+# name cannot drift from the tailnet the rest of the repo joins.
+#
+# Simultaneously a MagicDNS name Headscale already resolves and a real
+# subdomain of a Cloudflare zone, which is what lets a public CA validate it
+# over DNS-01 while only tailnet members can resolve or reach it.
+linkwarden_domain: "links.{{ tailnet_base_domain }}"
+
+linkwarden_dir: /opt/linkwarden
+
+# Resolvers Caddy uses for the ACME DNS-01 challenge, and only for that.
+#
+# ⚠️ Deliberately not 1.1.1.1. This LAN is 1.1.1.0/24, so that address belongs
+# to a machine on the network rather than to Cloudflare. See the same note in
+# group_vars/vault_host/vars.yml — this is the second service to need it,
+# which is exactly why it is written out rather than assumed.
+linkwarden_acme_resolvers:
+  - 8.8.8.8
+  - 9.9.9.9
+
+# <-- change this
+#
+# Where Let's Encrypt sends expiry warnings.
+linkwarden_acme_email: tomasbokor.dev@gmail.com
+
+# renovate: datasource=docker depName=ghcr.io/linkwarden/linkwarden
+linkwarden_version: "v2.16.1"
+
+# Upstream's own pin, NOT the newest Meilisearch. Linkwarden talks to a
+# specific index API and is tested against this; Meilisearch has had breaking
+# index changes across minors, and a search backend that silently stops
+# matching is worse than one that is a few versions behind. Renovate will
+# still open the PR — read Linkwarden's release notes before merging it.
+# renovate: datasource=docker depName=getmeili/meilisearch
+linkwarden_meilisearch_version: "v1.13.3"
+
+# renovate: datasource=docker depName=postgres
+linkwarden_postgres_version: "16-alpine"
+
+# Used for both stages of the Caddy build — `caddy:<v>-builder` compiles the
+# Cloudflare DNS plugin in, `caddy:<v>` runs it. One var, so the two stages
+# cannot end up a version apart.
+#
+# The `renovate:` line has to sit IMMEDIATELY above the var, with no comment
+# between, or Renovate stops tracking it silently.
+# renovate: datasource=docker depName=caddy
+caddy_version: "2.11.4"
+
+# Registration, spelled the way Linkwarden spells it.
+#
+# ⚠️ Ships TRUE — closed — and that is the safe default, but it means the
+# FIRST account cannot be created either. The one-time dance is: set this
+# false, register your account, set it back to true. docs/links.md walks
+# through it. Leaving it false is how a tailnet-reachable bookmark archive
+# ends up with accounts you did not create.
+linkwarden_disable_registration: true
+
+# Caddy's default request body limit is 10MB, which rejects both a large PDF
+# archive and the bookmarks HTML export from a long-lived Google account.
+linkwarden_max_upload: 100MB
+
+# ── Self-heal ────────────────────────────────────────────────────────
+#
+# Docker restarts a container whose process exits; it does not read healthcheck
+# results, so a container that is up but not answering is restarted by nothing.
+
+# Slower than the vault's 2min: this stack has four containers and a database
+# that takes real time to come back, and a check that fires during a legitimate
+# restart is how a self-heal timer becomes the outage.
+linkwarden_selfheal_interval: 5min
+
+# Consecutive misses before restarting.
+linkwarden_selfheal_failures: 3
+
+# tailscale_hostname isn't declared here — the tailscale role defaults it to
+# inventory_hostname, which is already "links".

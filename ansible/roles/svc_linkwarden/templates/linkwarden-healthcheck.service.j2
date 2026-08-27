@@ -1,0 +1,9 @@
+# Managed by Ansible (svc_linkwarden) — edits will be overwritten.
+
+[Unit]
+Description=Check links answers, and restart the stack if it stops
+After=linkwarden.service
+
+[Service]
+Type=oneshot
+ExecStart={{ linkwarden_dir }}/healthcheck.sh

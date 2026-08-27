@@ -56,6 +56,7 @@ service_enabled:
 | Service | Flag | Runs on | Docs |
 |---|---|---|---|
 | Vaultwarden | `vault` | its own guest, VM 999 | [docs/vault.md](docs/vault.md) |
+| Linkwarden | `links` | its own guest, VM 998 | [docs/links.md](docs/links.md) |
 | Kiosk dashboard | `kiosk` | the hypervisor | [docs/kiosk.md](docs/kiosk.md) |
 
 Keeping the host patched is [docs/updates.md](docs/updates.md): security

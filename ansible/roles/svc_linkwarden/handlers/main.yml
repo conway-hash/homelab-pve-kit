@@ -1,0 +1,14 @@
+---
+# Named distinctly from every other role's handlers: handler names are
+# play-global, so anything generic would collide silently.
+
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Restart the linkwarden stack
+  # One handler, not a separate "rebuild" one: the unit's ExecStart already
+  # passes `--build`, so a restart re-runs the Caddy build unconditionally.
+  ansible.builtin.systemd_service:
+    name: linkwarden
+    state: restarted

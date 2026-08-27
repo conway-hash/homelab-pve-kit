@@ -1,0 +1,205 @@
+---
+# Linkwarden behind its own Caddy, with its own Postgres and Meilisearch, all
+# as containers on this guest.
+#
+# Caddy is here — beside the thing it fronts — and not on a shared proxy
+# machine. That pattern existed in this project once and was retired: it bought
+# prettier URLs at the cost of a wildcard certificate and a DNS-write
+# credential living on a third box that then had to be maintained forever. A
+# per-service Caddy has neither problem.
+
+- name: Refuse to deploy without a session secret
+  ansible.builtin.assert:
+    that: svc_linkwarden_nextauth_secret | length > 0
+    fail_msg: >-
+      svc_linkwarden_nextauth_secret is unset. NextAuth signs session cookies
+      with it, so anyone holding it can mint a valid session for any account
+      without a password. Generate one with `openssl rand -base64 32` and put
+      it in group_vars/links_host/secrets.yml — see docs/links.md.
+
+- name: Refuse to deploy without a database password
+  ansible.builtin.assert:
+    that: svc_linkwarden_postgres_password | length > 0
+    fail_msg: >-
+      svc_linkwarden_postgres_password is unset. The postgres image refuses to
+      initialise without one, so the stack would come up with the app
+      crash-looping against a database that never started — see docs/links.md.
+
+- name: Refuse to deploy without a Meilisearch master key
+  ansible.builtin.assert:
+    that: svc_linkwarden_meili_master_key | length > 0
+    fail_msg: >-
+      svc_linkwarden_meili_master_key is unset. Meilisearch with no master key
+      accepts unauthenticated reads and writes from anything that reaches it,
+      and it holds the full text of every page this instance has archived —
+      see docs/links.md.
+
+- name: Refuse to deploy without the Cloudflare API token
+  ansible.builtin.assert:
+    that: svc_linkwarden_cloudflare_api_token | length > 0
+    fail_msg: >-
+      svc_linkwarden_cloudflare_api_token is unset, so Caddy cannot answer the
+      ACME DNS-01 challenge and will never obtain a certificate. Mint one from
+      Cloudflare's "Edit zone DNS" template — and mint a SEPARATE one from the
+      vault's, so revoking either does not take the other down. See
+      docs/links.md.
+
+# ── What the stack is allowed to listen on ───────────────────────────
+#
+# Docker publishes to 0.0.0.0 unless told otherwise, and this guest has a LAN
+# address as well as a tailnet one. The vault shipped with a bare "443:443" and
+# was reachable by every device on the home network until it was caught; this
+# service is not going to repeat it.
+
+- name: Read the guest's tailnet address
+  # The tailscale role runs before this one in site.yml, so the interface is
+  # already up and holding its address by the time this asks.
+  ansible.builtin.command: tailscale ip -4
+  register: svc_linkwarden_tailnet_ip
+  changed_when: false
+  check_mode: false
+
+- name: Refuse to deploy without a tailnet address
+  # Without this the template would render an empty bind address, which Docker
+  # reads as "all interfaces" — silently restoring the exact LAN exposure this
+  # is here to prevent. Failing is the safe direction.
+  ansible.builtin.assert:
+    that: svc_linkwarden_tailnet_ip.stdout | trim | length > 0
+    fail_msg: >-
+      `tailscale ip -4` returned nothing, so this guest is not on the tailnet.
+      Deploying now would publish the bookmark archive on every interface it
+      has, including the LAN. Fix the tailnet join first — see docs/links.md.
+
+- name: Create the stack directory
+  ansible.builtin.file:
+    path: "{{ linkwarden_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Create the data directories
+  ansible.builtin.file:
+    path: "{{ linkwarden_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - data          # archived pages: screenshots, PDFs, singlefile HTML
+    - pgdata        # the Postgres cluster — the bookmarks themselves
+    - meili_data    # the search index
+    - caddy-data    # issued certificates and the ACME account key
+    - caddy-config  # Caddy's own autosaved config
+
+- name: Write the Caddy build file
+  # Built rather than pulled. The official caddy image has no DNS provider
+  # modules compiled in, and the ready-made third-party images that do are not
+  # something to put in front of this on trust.
+  ansible.builtin.template:
+    src: Dockerfile.caddy.j2
+    dest: "{{ linkwarden_dir }}/Dockerfile.caddy"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart the linkwarden stack
+
+- name: Write the Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: "{{ linkwarden_dir }}/Caddyfile"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart the linkwarden stack
+
+- name: Write the compose file
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ linkwarden_dir }}/compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart the linkwarden stack
+
+- name: Write the environment files
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ linkwarden_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - linkwarden.env
+    - postgres.env
+    - meilisearch.env
+    - caddy.env
+  no_log: true
+  notify: Restart the linkwarden stack
+
+- name: Install the stack unit
+  ansible.builtin.template:
+    src: linkwarden.service.j2
+    dest: /etc/systemd/system/linkwarden.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable and start the stack
+  ansible.builtin.systemd_service:
+    name: linkwarden
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Install the self-heal script
+  ansible.builtin.template:
+    src: healthcheck.sh.j2
+    dest: "{{ linkwarden_dir }}/healthcheck.sh"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install the self-heal unit and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - linkwarden-healthcheck.service
+    - linkwarden-healthcheck.timer
+  notify: Reload systemd
+
+- name: Flush handlers before verifying
+  # The check below asserts on the running stack. Without this it would run
+  # against whatever was up BEFORE this play's config changes were applied, and
+  # pass or fail for reasons that have nothing to do with what just changed.
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the self-heal timer
+  ansible.builtin.systemd_service:
+    name: linkwarden-healthcheck.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Wait for Linkwarden to answer over HTTPS
+  # The real thing a browser does, end to end: a valid certificate for the real
+  # hostname, terminated by Caddy, proxied to an app that is awake.
+  #
+  # First convergence includes an ACME issuance, a Caddy build and the app's
+  # database migrations, hence the patient retry. An unauthenticated request is
+  # answered with a redirect to the login page — that redirect is the app being
+  # alive, so it counts.
+  ansible.builtin.uri:
+    url: "https://{{ linkwarden_domain }}/"
+    status_code: [200, 302, 307]
+    follow_redirects: none
+  register: svc_linkwarden_alive
+  until: svc_linkwarden_alive is success
+  retries: 60
+  delay: 10
+  changed_when: false

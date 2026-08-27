@@ -1,0 +1,46 @@
+# Managed by Ansible (svc_linkwarden) — edits will be overwritten.
+
+{
+	# Where expiry warnings go. ACME registration requires an address, and an
+	# unread one means the only warning before a silent outage goes nowhere.
+	email {{ linkwarden_acme_email }}
+}
+
+{{ linkwarden_domain }} {
+	tls {
+		# DNS-01, not HTTP-01. HTTP-01 needs Let's Encrypt to reach port 80 on
+		# this machine from the public internet, which would mean exposing the
+		# service to the world purely to renew a certificate. DNS-01 proves
+		# control of the name instead, so nothing here is ever published.
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+
+		# Public resolvers, explicitly, for the challenge only.
+		#
+		# The plugin works out which Cloudflare zone owns a name by walking up
+		# its SOA records, and by default it asks the system resolver. On a
+		# tailnet member that is MagicDNS, which answers SOA with NOTIMP — so
+		# zone discovery fails and no TXT record is ever presented. The error
+		# names the domain, not the resolver, which makes it look like a
+		# Cloudflare permissions problem.
+		#
+		# NOT 1.1.1.1: this LAN is 1.1.1.0/24, so that address is a machine
+		# down the hall rather than Cloudflare's resolver.
+		resolvers {{ linkwarden_acme_resolvers | join(' ') }}
+	}
+
+	reverse_proxy linkwarden:3000
+
+	# Archiving a page uploads it; the default 10MB body limit would reject a
+	# large PDF or a bookmark HTML export from a long-lived Google account,
+	# and the browser shows only a generic failure.
+	request_body {
+		max_size {{ linkwarden_max_upload }}
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

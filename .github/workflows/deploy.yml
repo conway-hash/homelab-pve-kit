@@ -353,9 +353,12 @@ jobs:
         run: |
           cp inventory/hosts.ini.example inventory/hosts.ini
 
-      # Scoped to this job, so the vault's credentials never exist in the run
-      # that only converges the hypervisor.
+      # Scoped to the VAULT leg specifically, not merely to the guest job.
+      # Without the `if`, every guest matrix leg wrote the vault's credentials
+      # to disk — so adding a second service quietly handed it a copy of the
+      # vault's admin token and Cloudflare credential for the length of the run.
       - name: Write the vault secrets
+        if: matrix.host == 'vault_host'
         # Secrets come through the environment, never interpolated into the
         # script text. GitHub substitutes ${{ secrets.X }} into the shell source
         # BEFORE bash parses it, so a secret containing $ — an Argon2 hash, for
@@ -395,10 +398,55 @@ jobs:
             printf 'svc_vaultwarden_cloudflare_api_token: "%s"\n'    "${SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN}"
           } > group_vars/vault_host/secrets.yml
 
+      # Its own step, its own `if`, its own secrets — see docs/links.md on why
+      # the Cloudflare token is a SEPARATE one from the vault's rather than a
+      # share of it.
+      - name: Write the links secrets
+        if: matrix.host == 'links_host'
+        # Through the environment, never interpolated into the script text:
+        # GitHub substitutes ${{ secrets.X }} into shell SOURCE before bash
+        # parses it, so a base64 secret containing $ becomes a variable
+        # expansion and arrives mangled. That is not hypothetical — it
+        # silently truncated the vault's admin token once already.
+        env:
+          SVC_LINKWARDEN_NEXTAUTH_SECRET: ${{ secrets.SVC_LINKWARDEN_NEXTAUTH_SECRET }}
+          SVC_LINKWARDEN_POSTGRES_PASSWORD: ${{ secrets.SVC_LINKWARDEN_POSTGRES_PASSWORD }}
+          SVC_LINKWARDEN_MEILI_MASTER_KEY: ${{ secrets.SVC_LINKWARDEN_MEILI_MASTER_KEY }}
+          SVC_LINKWARDEN_CLOUDFLARE_API_TOKEN: ${{ secrets.SVC_LINKWARDEN_CLOUDFLARE_API_TOKEN }}
+          SVC_LINKWARDEN_TS_AUTHKEY: ${{ secrets.SVC_LINKWARDEN_TS_AUTHKEY }}
+        run: |
+          for VAR in SVC_LINKWARDEN_NEXTAUTH_SECRET \
+                     SVC_LINKWARDEN_POSTGRES_PASSWORD \
+                     SVC_LINKWARDEN_MEILI_MASTER_KEY \
+                     SVC_LINKWARDEN_CLOUDFLARE_API_TOKEN; do
+            if [ -z "${!VAR}" ]; then
+              echo "::error::${VAR} is not set — see docs/links.md."
+              exit 1
+            fi
+          done
+
+          umask 077
+          # SVC_LINKWARDEN_TS_AUTHKEY is deliberately NOT required: it is only
+          # needed to put the guest on the tailnet the first time, and after
+          # that the tailscale role sees an existing join and skips it. It is
+          # also a DIFFERENT scope from the TS_AUTHKEY the runner joins with —
+          # non-ephemeral, because this is a permanent machine.
+          #
+          # printf rather than a heredoc, so re-indenting this block later
+          # cannot change what lands in the file.
+          {
+            printf 'tailscale_authkey: "%s"\n'                        "${SVC_LINKWARDEN_TS_AUTHKEY}"
+            printf 'svc_linkwarden_nextauth_secret: "%s"\n'           "${SVC_LINKWARDEN_NEXTAUTH_SECRET}"
+            printf 'svc_linkwarden_postgres_password: "%s"\n'         "${SVC_LINKWARDEN_POSTGRES_PASSWORD}"
+            printf 'svc_linkwarden_meili_master_key: "%s"\n'          "${SVC_LINKWARDEN_MEILI_MASTER_KEY}"
+            printf 'svc_linkwarden_cloudflare_api_token: "%s"\n'      "${SVC_LINKWARDEN_CLOUDFLARE_API_TOKEN}"
+          } > group_vars/links_host/secrets.yml
+
       - name: Run playbook
         run: ansible-playbook site.yml --limit "${{ matrix.host }}"
 
       - name: Smoke test — vault
+        if: matrix.host == 'vault_host'
         run: |
           FAILED=0
 
@@ -449,6 +497,64 @@ jobs:
             echo "OK: self-heal timer is active"
           else
             echo "::error::vaultwarden-healthcheck.timer is not active — a wedged stack would never be restarted"
+            FAILED=1
+          fi
+
+          exit $FAILED
+
+      - name: Smoke test — links
+        if: matrix.host == 'links_host'
+        run: |
+          FAILED=0
+
+          DOMAIN="links.$(grep '^tailnet_base_domain:' group_vars/all/vars.yml \
+            | sed 's/^tailnet_base_domain:[[:space:]]*//; s/[[:space:]]*#.*$//')"
+
+          # The check a real browser makes, from off-box, over the tailnet.
+          # No -k anywhere — an unverifiable certificate has to fail. Not -L
+          # either: an unauthenticated request is answered with a redirect to
+          # the login page, and that redirect IS the app being alive.
+          if curl -fsS --max-time 30 "https://${DOMAIN}/" >/dev/null; then
+            echo "OK: ${DOMAIN} answers over verified HTTPS"
+          else
+            echo "::error::${DOMAIN} did not answer over verified HTTPS"
+            FAILED=1
+          fi
+
+          # Registration being open would let anything reaching the tailnet
+          # create itself an account on your bookmark archive. Read from the
+          # RUNNING container rather than from any public endpoint, so this
+          # cannot quietly degrade into a check that verifies nothing.
+          REG=$(ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
+            ci-deploy@"${DOMAIN}" \
+            'sudo docker exec linkwarden printenv NEXT_PUBLIC_DISABLE_REGISTRATION' 2>/dev/null | tr -d '\r')
+          if [ "$REG" = "true" ]; then
+            echo "OK: registration is closed"
+          else
+            echo "::error::NEXT_PUBLIC_DISABLE_REGISTRATION is '${REG:-unreadable}', expected 'true' — anyone on the tailnet can register"
+            FAILED=1
+          fi
+
+          # 443 must NOT be listening on 0.0.0.0. This is the bug the vault
+          # shipped with: a bare "443:443" published the service to every
+          # device on the home LAN while every doc claimed tailnet-only.
+          if ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
+            ci-deploy@"${DOMAIN}" \
+            'sudo docker port linkwarden-caddy' 2>/dev/null | grep -q '0\.0\.0\.0:443'; then
+            echo "::error::linkwarden-caddy publishes 443 on 0.0.0.0 — the archive is exposed to the whole LAN, not just the tailnet"
+            FAILED=1
+          else
+            echo "OK: 443 is not published on 0.0.0.0"
+          fi
+
+          # The self-heal timer is the only thing covering "running but not
+          # answering". If it is not armed, that failure mode is uncovered.
+          if ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
+            ci-deploy@"${DOMAIN}" \
+            'systemctl is-active --quiet linkwarden-healthcheck.timer'; then
+            echo "OK: self-heal timer is active"
+          else
+            echo "::error::linkwarden-healthcheck.timer is not active — a wedged stack would never be restarted"
             FAILED=1
           fi
 

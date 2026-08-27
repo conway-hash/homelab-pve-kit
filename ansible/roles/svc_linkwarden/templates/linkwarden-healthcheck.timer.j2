@@ -1,0 +1,15 @@
+# Managed by Ansible (svc_linkwarden) — edits will be overwritten.
+
+[Unit]
+Description=Check links answers every {{ linkwarden_selfheal_interval }}
+
+[Timer]
+# The delay before the first check is generous on purpose: on a cold boot the
+# stack is still building, migrating and starting, and a check that fired into
+# that would count healthy startup as failure.
+OnBootSec=10min
+OnUnitActiveSec={{ linkwarden_selfheal_interval }}
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

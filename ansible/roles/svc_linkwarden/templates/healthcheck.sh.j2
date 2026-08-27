@@ -1,0 +1,48 @@
+#!/bin/sh
+# Managed by Ansible (svc_linkwarden) — edits will be overwritten.
+#
+# Docker restarts a container whose process EXITS; it does nothing about one
+# that is running and not answering. That leaves the real failure modes
+# uncovered — a wedged app, a Caddy sitting on a certificate it failed to
+# renew, a Postgres that came back read-only — in all of which every client
+# sees an outage while `docker ps` reports everything up.
+#
+# This asks the question a browser asks, and restarts the stack when the
+# answer stops coming.
+
+set -eu
+
+STATE=/run/linkwarden-healthcheck.failures
+THRESHOLD={{ linkwarden_selfheal_failures }}
+
+# --resolve, not a Host header: it sets SNI correctly, so Caddy picks the right
+# certificate and curl genuinely verifies it. An expired or missing certificate
+# has to FAIL this check — that is one of the things it exists to catch — so
+# verification is never skipped.
+#
+# Not -L. An unauthenticated request is answered with a redirect to the login
+# page, and that redirect IS the app being alive; following it only adds a
+# second request that can fail for its own reasons.
+if curl -fsS --max-time 15 \
+     --resolve "{{ linkwarden_domain }}:443:127.0.0.1" \
+     "https://{{ linkwarden_domain }}/" >/dev/null 2>&1; then
+  rm -f "$STATE"
+  exit 0
+fi
+
+FAILURES=$(( $(cat "$STATE" 2>/dev/null || echo 0) + 1 ))
+echo "$FAILURES" > "$STATE"
+
+# Restarting on a single miss would make a slow reload or a moment of load look
+# like a fault, and turn this into the outage it was meant to prevent.
+if [ "$FAILURES" -lt "$THRESHOLD" ]; then
+  echo "links did not answer ($FAILURES/$THRESHOLD) — not restarting yet"
+  exit 0
+fi
+
+echo "links did not answer $FAILURES times in a row — restarting the stack"
+rm -f "$STATE"
+
+# --no-block: this script runs from a unit, and restarting a target that would
+# wait on this same script's unit deadlocks systemd.
+systemctl restart --no-block linkwarden.service

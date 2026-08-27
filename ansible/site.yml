@@ -83,5 +83,30 @@
     - docker
     - svc_vaultwarden
 
+- name: Converge the links archive
+  hosts: links_host
+  become: true
+
+  # Deferred on purpose, same as the vault play: fact gathering is the play's
+  # first connection, so leaving it on would have Ansible SSH into a guest that
+  # may not exist — a service switched off has no VM, because pve_guests
+  # destroyed it. The end_play below runs before anything reaches the network.
+  gather_facts: false
+
+  pre_tasks:
+    - name: Stop here if links is switched off
+      ansible.builtin.meta: end_play
+      when: not (service_enabled.links | bool)
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+  # Same ordering and the same reasoning as the vault play.
+  roles:
+    - common
+    - tailscale
+    - docker
+    - svc_linkwarden
+
 # VM 100 (Obsidian sync) is not managed here and is not planned to be — see
 # inventory/hosts.ini.example.

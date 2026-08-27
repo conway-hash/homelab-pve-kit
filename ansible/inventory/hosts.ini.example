@@ -38,6 +38,18 @@ vault ansible_host=1.1.1.21 ansible_user=ci-deploy
 ansible_ssh_private_key_file=~/.ssh/homelab_ci_deploy
 ansible_ssh_common_args=-o StrictHostKeyChecking=accept-new -o ProxyCommand="ssh -W %h:%p -q -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new ci-deploy@pve.ts.conway-hash.com"
 
+# Group `links_host`, machine `links` — same split as vault_host/vault.
+[links_host]
+# Reached by ProxyJump through the hypervisor, not by tailnet name, and
+# deliberately so: the tailnet name would work once the tailscale role has run,
+# but it would ALSO be the only way in, so a guest whose tailnet join broke
+# would be unreachable by the very playbook that could fix it.
+links ansible_host=1.1.1.22 ansible_user=ci-deploy
+
+[links_host:vars]
+ansible_ssh_private_key_file=~/.ssh/homelab_ci_deploy
+ansible_ssh_common_args=-o StrictHostKeyChecking=accept-new -o ProxyCommand="ssh -W %h:%p -q -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new ci-deploy@pve.ts.conway-hash.com"
+
 # The Obsidian sync server (VM 100) is NOT managed here and is NOT on the
 # tailnet — nothing outside the LAN can reach it. It predates this repo and
 # stays out of scope.

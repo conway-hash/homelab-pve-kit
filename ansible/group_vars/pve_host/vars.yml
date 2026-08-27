@@ -341,3 +341,27 @@ pve_guests:
       # archive is a vault missing every password added since, and restoring it
       # would lose more than it recovers.
       keep_daily: 7
+
+  - name: links
+    service: links
+    vmid: 998
+    cores: 2
+    # Four containers, one of them a Postgres and one a search index that holds
+    # the full text of every archived page. 2G is where this OOMs during an
+    # archive job; upstream recommends 4G and that is not padding.
+    memory_mb: 4096
+    # Bigger than the vault's 20G because this one accumulates: every bookmark
+    # can carry a screenshot, a PDF and a singlefile HTML copy of the page.
+    disk_gb: 40
+    # Next free below the vault's .21, and still under 1.1.1.100 where consumer
+    # routers start handing out leases.
+    ipv4: 1.1.1.22
+    # After the vault. Nothing depends on that ordering, but when the host
+    # comes back from a power cut the machine holding your passwords should be
+    # the one that gets the disk first.
+    startup_order: 20
+    # Same rolling week as the vault. Bookmarks are re-collectable in theory
+    # and never in practice.
+    backup:
+      schedule: "04:00"
+      keep_daily: 7

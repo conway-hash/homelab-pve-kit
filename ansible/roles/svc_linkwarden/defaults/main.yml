@@ -1,0 +1,46 @@
+---
+# This file holds ONLY vars with no safe default — secrets and
+# required-but-unset values, declared as "" with an ansible.builtin.assert in
+# tasks/main.yml that refuses to deploy without them. Everything with a real
+# default (versions, paths, the domain) lives in group_vars/links_host/vars.yml,
+# not here; the same key in both files is the duplication bug this repo has
+# already paid down once.
+#
+# Set for real in group_vars/links_host/secrets.yml (git-ignored) or written by
+# CI from GitHub Secrets immediately before the playbook runs. See docs/links.md.
+
+# Signs and encrypts the session cookies. Anyone holding this can mint a valid
+# session for any account on the instance without knowing a password, so it is
+# every bit as sensitive as the database itself.
+#
+#   openssl rand -base64 32
+svc_linkwarden_nextauth_secret: ""
+
+# Postgres superuser password. Reachable only from the other containers on this
+# stack's private network — there is no published port — but it is also half of
+# DATABASE_URL, and that URL is what the app authenticates with.
+#
+#   openssl rand -base64 32 | tr -d '/+='
+#
+# ⚠️ Kept to URL-safe characters on purpose. It is interpolated into a
+# postgresql:// connection string; the template percent-encodes it, but a
+# password full of punctuation is a bad thing to debug through two layers of
+# encoding when it goes wrong.
+svc_linkwarden_postgres_password: ""
+
+# Meilisearch master key. Meilisearch has no concept of "no auth" once a master
+# key is set, which is the point — without one, anything that reaches the
+# container can read and rewrite the whole search index.
+#
+#   openssl rand -base64 32
+svc_linkwarden_meili_master_key: ""
+
+# Cloudflare API token for the ACME DNS-01 challenge.
+#
+# ⚠️ Its OWN token, not a share of the vault's. Same zone and same permissions,
+# but revoking one must not take the other down, and the Cloudflare audit log
+# should be able to say which service wrote which record. Mint it from the
+# "Edit zone DNS" template restricted to the one zone — that is Zone:Read +
+# DNS:Edit, and the plugin needs both: it walks up from _acme-challenge.<host>
+# to find the owning zone, which DNS:Edit alone cannot do.
+svc_linkwarden_cloudflare_api_token: ""

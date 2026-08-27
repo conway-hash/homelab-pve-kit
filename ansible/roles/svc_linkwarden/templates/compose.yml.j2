@@ -1,0 +1,109 @@
+# Managed by Ansible (svc_linkwarden) — edits will be overwritten.
+
+services:
+  postgres:
+    image: postgres:{{ linkwarden_postgres_version }}
+    container_name: linkwarden-postgres
+    restart: unless-stopped
+    env_file:
+      # format: raw — parsed literally, with NO variable interpolation.
+      # Compose interpolates '$' in env_file VALUES, not only in
+      # `environment:`, and a generated password containing one would arrive
+      # truncated with nothing logged. The vault hit exactly this.
+      - path: ./postgres.env
+        format: raw
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    # No `ports:`. Postgres is reachable only across this stack's private
+    # network, from the app. A published 5432 would put the database on the
+    # guest's LAN address behind one password.
+    healthcheck:
+      # The database's own readiness check, not a TCP poke: Postgres accepts
+      # connections for several seconds before it will answer a query, and
+      # `depends_on: service_healthy` below is what keeps the app from
+      # starting into that window and crash-looping on migrations.
+      test: ["CMD-SHELL", "pg_isready -U linkwarden -d linkwarden"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  meilisearch:
+    image: getmeili/meilisearch:{{ linkwarden_meilisearch_version }}
+    container_name: linkwarden-meilisearch
+    restart: unless-stopped
+    env_file:
+      - path: ./meilisearch.env
+        format: raw
+    volumes:
+      - ./meili_data:/meili_data
+    # No `ports:` here either. With a master key set, Meilisearch is
+    # authenticated — but it is also a complete copy of every page this
+    # instance has archived, in plain text and built for fast retrieval.
+
+  linkwarden:
+    image: ghcr.io/linkwarden/linkwarden:{{ linkwarden_version }}
+    container_name: linkwarden
+    restart: unless-stopped
+    env_file:
+      - path: ./linkwarden.env
+        format: raw
+    volumes:
+      - ./data:/data/data
+    depends_on:
+      postgres:
+        # Not a bare `depends_on: [postgres]`, which waits only for the
+        # container to START. Linkwarden runs its migrations on boot and exits
+        # if the database will not answer yet, so without the health gate the
+        # first run of a cold stack is a restart loop that eventually settles
+        # and looks like nothing happened.
+        condition: service_healthy
+      meilisearch:
+        condition: service_started
+    # No `ports:`. The app speaks plain HTTP on 3000 and is reached only by
+    # Caddy, across this stack's private network.
+
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+      args:
+        CADDY_VERSION: "{{ caddy_version }}"
+    container_name: linkwarden-caddy
+    restart: unless-stopped
+    env_file:
+      - path: ./caddy.env
+        format: raw
+    ports:
+      # Bound to the tailnet address, NOT 0.0.0.0. A bare "443:443" publishes
+      # on every interface this guest has — including its LAN address — which
+      # would put the whole bookmark archive in front of every device on the
+      # home network. Docker's publish rules sit in front of the host firewall,
+      # so this binding, not a rule, is what closes it. The vault shipped with
+      # that bug; this one does not.
+      - "{{ svc_linkwarden_tailnet_ip.stdout | trim }}:443:443"
+      # HTTP/3, which Caddy serves by default.
+      - "{{ svc_linkwarden_tailnet_ip.stdout | trim }}:443:443/udp"
+      # Loopback as well, and load-bearing: healthcheck.sh curls
+      # --resolve <domain>:443:127.0.0.1. Drop this and the self-heal check can
+      # never connect, decides the service is down, and restarts a perfectly
+      # healthy stack forever.
+      - "127.0.0.1:443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-data:/data
+      - ./caddy-config:/config
+    depends_on:
+      - linkwarden
+    healthcheck:
+      # Caddy's admin API, enabled by default on localhost:2019. It proves the
+      # process is up holding a parsed config — the honest scope of this check.
+      # It does not prove the vhost serves TLS; the self-heal timer does that.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "--timeout=3",
+             "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Long enough to cover an ACME issuance on a cold start, which blocks
+      # the config from loading until the certificate is in hand.
+      start_period: 60s
