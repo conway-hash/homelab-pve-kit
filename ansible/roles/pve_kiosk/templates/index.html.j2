@@ -669,7 +669,48 @@ function layout(nodes,W,H){
       a.y=Math.max(38,Math.min(H-56,a.y));
     }
   }
+  evictIntruders(nodes,W,H);
   nodes.forEach(n=>POS[n.id]={x:n.x,y:n.y});
+}
+
+/* The "ON PVE" box is an axis-aligned rectangle spanning the hypervisor and
+   its guests — and a rectangle drawn around some nodes will cheerfully
+   enclose any other node that happens to drift inside it. A phone rendered
+   inside that box is not a cosmetic wart: the box's entire meaning is
+   containment, so anything in it is a claim about where that machine runs.
+   The data was never wrong (the phone has parent=null); only the drawing was.
+
+   So non-members get pushed out before anything is drawn, using the SAME
+   padding drawTailnet uses for the rect, or the eviction would aim at a box
+   of a different size than the one that appears. */
+function hullRect(nodes){
+  const self=nodes.find(n=>n.self), kids=nodes.filter(n=>n.parent);
+  if(!self||!kids.length)return null;
+  const grp=[self,...kids];
+  return {x0:Math.min(...grp.map(n=>n.x))-48, x1:Math.max(...grp.map(n=>n.x))+48,
+          y0:Math.min(...grp.map(n=>n.y))-32, y1:Math.max(...grp.map(n=>n.y))+50};
+}
+
+function evictIntruders(nodes,W,H){
+  const r=hullRect(nodes);
+  if(!r)return;
+  const M=16;                       /* clearance, so a node does not graze the edge */
+  for(const n of nodes){
+    if(n.self||n.parent)continue;   /* members belong inside; leave them */
+    if(n.x<r.x0-M||n.x>r.x1+M||n.y<r.y0-M||n.y>r.y1+M)continue;
+    /* Leave by the nearest edge that the canvas actually has room for.
+       Without the room check a node evicted off one side is simply clamped
+       back in by the bounds below, and lands inside the box again. */
+    const opts=[
+      {d:n.x-(r.x0-M), go:()=>{n.x=r.x0-M;}, ok:r.x0-M>80},
+      {d:(r.x1+M)-n.x, go:()=>{n.x=r.x1+M;}, ok:r.x1+M<W-80},
+      {d:n.y-(r.y0-M), go:()=>{n.y=r.y0-M;}, ok:r.y0-M>38},
+      {d:(r.y1+M)-n.y, go:()=>{n.y=r.y1+M;}, ok:r.y1+M<H-56},
+    ].filter(o=>o.ok).sort((a,b)=>a.d-b.d);
+    /* If the box spans the whole canvas there is nowhere legal to go, and
+       leaving the node put beats teleporting it somewhere worse. */
+    if(opts.length)opts[0].go();
+  }
 }
 
 const linkCol=n=>n.self?"var(--fg)":n.link==="direct"?"var(--good)"
@@ -687,13 +728,20 @@ function drawTailnet(tn){
   layout(nodes,W,H);
   const self=nodes.find(n=>n.self)||nodes[0];
 
-  const kids=nodes.filter(n=>n.parent);
-  if(kids.length){
-    const grp=[self,...kids];
-    const x0=Math.min(...grp.map(n=>n.x))-48,x1=Math.max(...grp.map(n=>n.x))+48;
-    const y0=Math.min(...grp.map(n=>n.y))-32,y1=Math.max(...grp.map(n=>n.y))+50;
-    svg.append(mk("rect",{x:x0,y:y0,width:x1-x0,height:y1-y0,rx:14,class:"hull"}));
-    svg.append(txt(x0+9,y0+13,"hull-l",`ON ${self.name.toUpperCase()}`));
+  // The same helper the eviction pass uses, so the box drawn here and the box
+  // nodes were pushed out of are by construction identical.
+  const r=hullRect(nodes);
+  /* And drawn ONLY if it is true. On a small canvas the box can span nearly
+     everything, leaving the eviction pass nowhere legal to push an intruder —
+     measured at 360x220, which is roughly this card on a phone. A box that
+     encloses a machine not running on this host asserts something false about
+     that machine; no box merely omits something the tether lines already
+     show. So when it cannot be honest it is not drawn. */
+  const honest=r&&!nodes.some(n=>!n.self&&!n.parent&&
+    n.x>r.x0&&n.x<r.x1&&n.y>r.y0&&n.y<r.y1);
+  if(honest){
+    svg.append(mk("rect",{x:r.x0,y:r.y0,width:r.x1-r.x0,height:r.y1-r.y0,rx:14,class:"hull"}));
+    svg.append(txt(r.x0+9,r.y0+13,"hull-l",`ON ${self.name.toUpperCase()}`));
   }
 
   for(const n of nodes){

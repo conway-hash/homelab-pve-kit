@@ -156,6 +156,26 @@ are along the bottom, and anything under 21 days becomes a notification.
 not broken, and a permanent line on a list headed "notifications" is how you
 learn to stop reading the list. It is on the graph, where it belongs.
 
+### The "ON PVE" box means containment, so it is kept true
+
+Guests of this hypervisor are drawn inside a labelled box. That box is an
+axis-aligned rectangle spanning the hypervisor and its guests — and a rectangle
+drawn around some nodes will cheerfully enclose any other node that drifted
+into it. A phone once appeared to be running on the hypervisor for exactly this
+reason.
+
+The data was never wrong; the phone's `parent` was null the whole time. Only
+the drawing was. Two things keep it honest now:
+
+- Non-members are **pushed out** of the rectangle before anything is drawn,
+  using the same padding the rectangle itself uses — otherwise the eviction
+  would aim at a box of a different size than the one that appears.
+- If the box cannot be made honest, it is **not drawn**. On a canvas around
+  360x220 — roughly this card on a phone — the box can span nearly everything,
+  leaving nowhere legal to push an intruder. A box enclosing a machine that is
+  not on this host asserts something false about that machine; no box merely
+  omits what the tether lines already show.
+
 ## Guests, containers, and the tabs
 
 The middle column is tabbed by where a guest came from:
