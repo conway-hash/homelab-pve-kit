@@ -1,0 +1,55 @@
+---
+# The finance guest — Firefly III behind its own Caddy.
+#
+# Named `finance`, not `firefly`: the guest and the tailnet name describe the
+# JOB, so replacing the software later does not mean renaming a machine, a
+# certificate and a bookmark. The role is svc_firefly because that names the
+# thing it installs — same split as vault/svc_vaultwarden.
+
+firefly_domain: "finance.{{ tailnet_base_domain }}"
+
+firefly_dir: /opt/firefly
+
+# <-- change this
+#
+# Shown to non-admin users in error messages, and where Let's Encrypt sends
+# certificate expiry warnings.
+firefly_acme_email: tomasbokor.dev@gmail.com
+firefly_site_owner: tomasbokor.dev@gmail.com
+
+# Firefly stamps transactions with this, so getting it wrong puts purchases on
+# the wrong day and quietly skews every daily and monthly total.
+firefly_timezone: Europe/Prague
+
+# renovate: datasource=docker depName=fireflyiii/core
+firefly_version: "version-6.6.6"
+
+# renovate: datasource=docker depName=postgres
+firefly_postgres_version: "16-alpine"
+
+# renovate: datasource=docker depName=caddy
+caddy_version: "2.11.4"
+
+# Caddy's 10MB default rejects both a year of bank statements and a scanned
+# receipt attachment, and the browser shows only a generic failure.
+firefly_max_upload: 100MB
+
+# ── Scheduled jobs ───────────────────────────────────────────────────
+#
+# Recurring transactions, bill detection and automated rules only happen when
+# something calls Firefly's cron endpoint. Nothing calls it by itself, and
+# nothing complains when it is never called — the features simply appear
+# broken.
+#
+# 03:00, well clear of the Saturday 00:00 backup window, so a long vzdump and
+# a cron run are never contending for the same disk.
+firefly_cron_schedule: "03:00"
+
+# ── Self-heal ────────────────────────────────────────────────────────
+
+# Slower than the vault's 2min: PHP-FPM plus a database takes real time to come
+# back, and a check that fires during a legitimate restart is how a self-heal
+# timer becomes the outage it was meant to prevent.
+firefly_selfheal_interval: 5min
+
+firefly_selfheal_failures: 3

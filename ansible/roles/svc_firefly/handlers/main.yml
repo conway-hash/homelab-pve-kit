@@ -1,0 +1,12 @@
+---
+# Named distinctly from every other role's handlers: handler names are
+# play-global, so anything generic would collide silently.
+
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Restart the firefly stack
+  ansible.builtin.systemd_service:
+    name: firefly
+    state: restarted

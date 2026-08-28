@@ -1,0 +1,36 @@
+# Managed by Ansible (svc_firefly) — edits will be overwritten.
+
+{
+	email {{ firefly_acme_email }}
+}
+
+{{ firefly_domain }} {
+	tls {
+		# DNS-01, not HTTP-01: nothing here is publicly reachable and is not
+		# going to be, so there is no port 80 for Let's Encrypt to reach.
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+
+		# Cloudflare's own resolver, because the zone is hosted there and its
+		# recursive resolver is cache-coherent with its authoritative
+		# nameservers. Google and Quad9 negative-cache the challenge name and
+		# cannot see the record inside Caddy's propagation timeout — that is
+		# exactly how the links certificate failed. See acme_dns_resolvers in
+		# group_vars/all/vars.yml.
+		resolvers {{ acme_dns_resolvers | join(' ') }}
+	}
+
+	reverse_proxy firefly:8080
+
+	# Importing a year of bank statements or attaching a scanned receipt both
+	# exceed Caddy's 10MB default, and the browser shows only a generic error.
+	request_body {
+		max_size {{ firefly_max_upload }}
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

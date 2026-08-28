@@ -1,0 +1,17 @@
+#!/bin/sh
+# Managed by Ansible (svc_firefly) — edits will be overwritten.
+# Mode 0700: this script holds the cron token.
+#
+# The token lives here rather than in the unit's ExecStart because unit files
+# are world-readable at 0644, and anyone who can read it can trigger Firefly's
+# scheduled jobs. Same reasoning that puts the app key in a 0600 env file
+# instead of in compose.yml.
+#
+# Through the loopback publish and Caddy, so this exercises the same path a
+# browser does rather than a private one that could rot unnoticed.
+
+set -eu
+
+curl -fsS --max-time 300 \
+  --resolve "{{ firefly_domain }}:443:127.0.0.1" \
+  "https://{{ firefly_domain }}/api/v1/cron/{{ svc_firefly_cron_token }}"

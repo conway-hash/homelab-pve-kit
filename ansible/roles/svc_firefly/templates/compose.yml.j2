@@ -1,0 +1,98 @@
+# Managed by Ansible (svc_firefly) — edits will be overwritten.
+
+services:
+  firefly:
+    image: fireflyiii/core:{{ firefly_version }}
+    container_name: firefly
+    restart: unless-stopped
+    env_file:
+      # format: raw — parsed literally, with NO variable interpolation.
+      # Compose interpolates '$' in env_file VALUES, not only in
+      # `environment:`, and a generated key containing one would arrive
+      # truncated with nothing logged. The vault hit exactly this.
+      - path: ./firefly.env
+        format: raw
+    volumes:
+      # A NAMED volume, not a bind mount, and deliberately.
+      #
+      # This image runs as www-data and manages the ownership of its own
+      # upload directory. A host bind mount whose owner Ansible re-asserts on
+      # every converge is precisely how the links guest broke: the second
+      # convergence took the directory back off the running service. A named
+      # volume is created with the ownership the image wants and there is
+      # nothing on the host for Ansible to fight over.
+      #
+      # It is still backed up: vzdump images the whole guest disk, and
+      # /var/lib/docker is on it.
+      - firefly_upload:/var/www/html/storage/upload
+    depends_on:
+      postgres:
+        # service_healthy, not a bare depends_on: Firefly runs its database
+        # migrations on boot and exits if Postgres will not answer yet, so
+        # without the gate a cold start is a restart loop that eventually
+        # settles and looks like nothing happened.
+        condition: service_healthy
+    # No `ports:`. Firefly speaks plain HTTP on 8080 and is reached only by
+    # Caddy, across this stack's private network.
+
+  postgres:
+    image: postgres:{{ firefly_postgres_version }}
+    container_name: firefly-postgres
+    restart: unless-stopped
+    env_file:
+      - path: ./postgres.env
+        format: raw
+    volumes:
+      # Named, for the same reason as above — and specifically because the
+      # Postgres server is the one process in these stacks that does NOT run
+      # as root. Bind-mounting its data directory means knowing and pinning
+      # its uid; a named volume means not having to.
+      - firefly_db:/var/lib/postgresql/data
+    healthcheck:
+      # The database's own readiness check, not a TCP poke: Postgres accepts
+      # connections for several seconds before it will answer a query.
+      test: ["CMD-SHELL", "pg_isready -U firefly -d firefly"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+      args:
+        CADDY_VERSION: "{{ caddy_version }}"
+    container_name: firefly-caddy
+    restart: unless-stopped
+    env_file:
+      - path: ./caddy.env
+        format: raw
+    ports:
+      # Bound to the tailnet address, NOT 0.0.0.0. A bare "443:443" publishes
+      # on every interface this guest has — including its LAN address — which
+      # would put every transaction you own in front of every device on the
+      # home network. Docker's publish rules sit in front of the host
+      # firewall, so this binding, not a rule, is what closes it.
+      - "{{ svc_firefly_tailnet_ip.stdout | trim }}:443:443"
+      - "{{ svc_firefly_tailnet_ip.stdout | trim }}:443:443/udp"
+      # Loopback as well, and load-bearing twice over: healthcheck.sh and the
+      # nightly cron timer both reach Firefly through it.
+      - "127.0.0.1:443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-data:/data
+      - ./caddy-config:/config
+    depends_on:
+      - firefly
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "--timeout=3",
+             "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  firefly_upload:
+  firefly_db:

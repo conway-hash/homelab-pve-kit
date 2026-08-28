@@ -1,0 +1,9 @@
+# Managed by Ansible (svc_firefly) — edits will be overwritten.
+
+[Unit]
+Description=Check finance answers, and restart the stack if it stops
+After=firefly.service
+
+[Service]
+Type=oneshot
+ExecStart={{ firefly_dir }}/healthcheck.sh

@@ -1,0 +1,203 @@
+---
+# Firefly III behind its own Caddy, with its own Postgres, all as containers
+# on this guest.
+
+- name: Refuse to deploy without an app key of exactly 32 characters
+  # Length, not merely presence. Firefly's own .env.example requires exactly
+  # 32, and a key of the wrong length does not fail at startup — it fails
+  # later, when something is decrypted, which is a much worse place to find out.
+  ansible.builtin.assert:
+    that: svc_firefly_app_key | length == 32
+    fail_msg: >-
+      svc_firefly_app_key must be EXACTLY 32 characters (it is
+      {{ svc_firefly_app_key | length }}). Generate one with
+      `openssl rand -base64 24` and put it in
+      group_vars/finance_host/secrets.yml — see docs/finance.md.
+
+- name: Refuse to deploy without a cron token of exactly 32 characters
+  ansible.builtin.assert:
+    that: svc_firefly_cron_token | length == 32
+    fail_msg: >-
+      svc_firefly_cron_token must be EXACTLY 32 characters (it is
+      {{ svc_firefly_cron_token | length }}). Firefly refuses to run its
+      scheduled jobs at any other length, and it refuses quietly — recurring
+      transactions simply never appear. `openssl rand -hex 16` — see
+      docs/finance.md.
+
+- name: Refuse to deploy without a database password
+  ansible.builtin.assert:
+    that: svc_firefly_postgres_password | length > 0
+    fail_msg: >-
+      svc_firefly_postgres_password is unset. The postgres image refuses to
+      initialise without one, so the stack would come up with Firefly
+      crash-looping against a database that never started — see docs/finance.md.
+
+- name: Refuse to deploy without the Cloudflare API token
+  ansible.builtin.assert:
+    that: svc_firefly_cloudflare_api_token | length > 0
+    fail_msg: >-
+      svc_firefly_cloudflare_api_token is unset, so Caddy cannot answer the
+      ACME DNS-01 challenge and will never obtain a certificate. Mint a
+      SEPARATE token from the other services' — see docs/finance.md.
+
+# ── What the stack is allowed to listen on ───────────────────────────
+
+- name: Read the guest's tailnet address
+  # The tailscale role runs before this one in site.yml, so the interface is
+  # already up and holding its address by the time this asks.
+  ansible.builtin.command: tailscale ip -4
+  register: svc_firefly_tailnet_ip
+  changed_when: false
+  check_mode: false
+
+- name: Refuse to deploy without a tailnet address
+  # Without this the template renders an empty bind address, which Docker
+  # reads as "all interfaces" — silently publishing every transaction you own
+  # to the whole LAN. Failing is the safe direction.
+  ansible.builtin.assert:
+    that: svc_firefly_tailnet_ip.stdout | trim | length > 0
+    fail_msg: >-
+      `tailscale ip -4` returned nothing, so this guest is not on the tailnet.
+      Fix the tailnet join first — see docs/finance.md.
+
+- name: Create the stack directory
+  ansible.builtin.file:
+    path: "{{ firefly_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Create the Caddy state directories
+  # Only Caddy's, and only these. Firefly's uploads and the Postgres cluster
+  # are NAMED docker volumes rather than bind mounts — see compose.yml.j2 for
+  # why. Caddy runs as root, so re-asserting root:root here is safe in a way
+  # it was not for the links guest's Postgres.
+  ansible.builtin.file:
+    path: "{{ firefly_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - caddy-data      # issued certificates and the ACME account key
+    - caddy-config    # Caddy's own autosaved config
+
+- name: Write the Caddy build file
+  ansible.builtin.template:
+    src: Dockerfile.caddy.j2
+    dest: "{{ firefly_dir }}/Dockerfile.caddy"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart the firefly stack
+
+- name: Write the Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: "{{ firefly_dir }}/Caddyfile"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart the firefly stack
+
+- name: Write the compose file
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ firefly_dir }}/compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart the firefly stack
+
+- name: Write the environment files
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ firefly_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - firefly.env
+    - postgres.env
+    - caddy.env
+  no_log: true
+  notify: Restart the firefly stack
+
+- name: Install the stack unit
+  ansible.builtin.template:
+    src: firefly.service.j2
+    dest: /etc/systemd/system/firefly.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable and start the stack
+  ansible.builtin.systemd_service:
+    name: firefly
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Install the self-heal script
+  ansible.builtin.template:
+    src: healthcheck.sh.j2
+    dest: "{{ firefly_dir }}/healthcheck.sh"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install the scheduled-jobs script
+  # 0700, not 0750: unlike healthcheck.sh this one contains the cron token.
+  ansible.builtin.template:
+    src: cron.sh.j2
+    dest: "{{ firefly_dir }}/cron.sh"
+    owner: root
+    group: root
+    mode: "0700"
+  no_log: true
+
+- name: Install the timers and their units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - firefly-healthcheck.service
+    - firefly-healthcheck.timer
+    - firefly-cron.service
+    - firefly-cron.timer
+  notify: Reload systemd
+
+- name: Flush handlers before verifying
+  # The check below asserts on the running stack. Without this it would run
+  # against whatever was up BEFORE this play's changes were applied.
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the timers
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop:
+    - firefly-healthcheck.timer
+    - firefly-cron.timer
+
+- name: Wait for Firefly III to answer over HTTPS
+  # The real thing a browser does, end to end. First convergence includes an
+  # ACME issuance, a Caddy build and Firefly's database migrations, hence the
+  # patient retry. An unauthenticated request is answered with a redirect to
+  # the login page — that redirect is the app being alive, so it counts.
+  ansible.builtin.uri:
+    url: "https://{{ firefly_domain }}/"
+    status_code: [200, 302, 307]
+    follow_redirects: none
+  register: svc_firefly_alive
+  until: svc_firefly_alive is success
+  retries: 60
+  delay: 10
+  changed_when: false

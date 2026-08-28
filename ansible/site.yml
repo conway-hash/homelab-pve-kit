@@ -108,5 +108,28 @@
     - docker
     - svc_linkwarden
 
+- name: Converge the finance guest
+  hosts: finance_host
+  become: true
+
+  # Deferred for the same reason as the other guest plays: a service switched
+  # off has no VM, and fact gathering would be the play's first connection to
+  # a machine that does not exist.
+  gather_facts: false
+
+  pre_tasks:
+    - name: Stop here if finance is switched off
+      ansible.builtin.meta: end_play
+      when: not (service_enabled.finance | bool)
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+  roles:
+    - common
+    - tailscale
+    - docker
+    - svc_firefly
+
 # VM 100 (Obsidian sync) is not managed here and is not planned to be — see
 # inventory/hosts.ini.example.

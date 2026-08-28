@@ -1,0 +1,27 @@
+# Managed by Ansible (svc_firefly) — edits will be overwritten.
+
+[Unit]
+Description=Firefly III stack (app + postgres + Caddy)
+Requires=docker.service
+# tailscaled is in the ordering because the compose file publishes on this
+# guest's tailnet address. If that interface has no address yet, Docker cannot
+# bind and the containers fail to start.
+After=docker.service network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory={{ firefly_dir }}
+
+# --build because Caddy is built from a Dockerfile here; without it a version
+# bump would start the previously built image and report success.
+ExecStart=/usr/bin/docker compose up -d --build --remove-orphans
+ExecStop=/usr/bin/docker compose down
+
+# The build can pull a Go toolchain on a cold cache, and Firefly runs database
+# migrations on its first boot.
+TimeoutStartSec=1200
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,31 @@
+---
+# ONLY vars with no safe default — secrets and required-but-unset values,
+# declared as "" with an assert in tasks/main.yml that refuses to deploy
+# without them. Everything with a real default lives in
+# group_vars/finance_host/vars.yml.
+
+# Laravel's application key. Encrypts session cookies and anything Firefly
+# stores encrypted, so rotating it logs everyone out and makes existing
+# encrypted values unreadable.
+#
+# ⚠️ Must be EXACTLY 32 characters — Firefly's own .env.example says so, and a
+# key of the wrong length fails at runtime rather than at startup.
+#
+#   openssl rand -base64 24     # 32 chars of base64
+svc_firefly_app_key: ""
+
+# Authenticates the scheduled-job endpoint, which is reachable over HTTP —
+# anyone who can reach the host and knows this token can trigger Firefly's
+# cron. Also EXACTLY 32 characters, and Firefly refuses to run the job at any
+# other length.
+#
+#   openssl rand -hex 16        # 32 chars
+svc_firefly_cron_token: ""
+
+# Postgres password. Reachable only across this stack's private network.
+svc_firefly_postgres_password: ""
+
+# Cloudflare API token for the ACME DNS-01 challenge. Its OWN token — same
+# zone and permissions as the others, but revoking one must not take the rest
+# down, and the audit log should say which service wrote which record.
+svc_firefly_cloudflare_api_token: ""

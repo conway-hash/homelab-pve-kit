@@ -383,3 +383,22 @@ pve_guests:
     backup:
       schedule: "sat 00:00"
       keep_last: 4
+
+  - name: finance
+    service: finance
+    vmid: 997
+    cores: 2
+    # PHP-FPM and a Postgres, and neither is Next.js. Measured rather than
+    # guessed once it is up; if it idles well under this it comes down.
+    memory_mb: 2048
+    # Firefly's own data is small — a decade of transactions is tens of MB.
+    # The disk is sized for the OS and container images, which is what
+    # actually fills a guest.
+    disk_gb: 20
+    ipv4: 1.1.1.23
+    # Last of the three. Nothing depends on the ordering; it just means the
+    # machine holding passwords gets the disk first after a power cut.
+    startup_order: 30
+    backup:
+      schedule: "sat 00:00"
+      keep_last: 4

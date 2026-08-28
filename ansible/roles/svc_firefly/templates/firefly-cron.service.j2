@@ -1,0 +1,21 @@
+# Managed by Ansible (svc_firefly) — edits will be overwritten.
+#
+# Firefly's scheduled work — recurring transactions, bill detection, automated
+# rules — runs when something calls its cron endpoint. Upstream ships a whole
+# extra Alpine container running crond to do it.
+#
+# A systemd timer instead: one fewer container, and `systemctl list-timers`
+# answers "is this actually scheduled" in a way a crond buried inside a
+# container does not. Same reasoning as the self-heal timer beside it.
+
+[Unit]
+Description=Run Firefly III's scheduled jobs
+After=firefly.service
+
+[Service]
+Type=oneshot
+# The token is in the script, not here: units are world-readable at 0644.
+# `set -e` plus curl --fail in there means an HTTP error is a unit failure,
+# so it shows up in `systemctl --failed` and on the kiosk rather than being a
+# silent no-op forever.
+ExecStart={{ firefly_dir }}/cron.sh

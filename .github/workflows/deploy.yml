@@ -249,6 +249,48 @@ jobs:
 
           exit $FAILED
 
+      - name: Smoke test — finance
+        if: matrix.host == 'finance_host'
+        run: |
+          FAILED=0
+
+          DOMAIN="finance.$(grep '^tailnet_base_domain:' group_vars/all/vars.yml \
+            | sed 's/^tailnet_base_domain:[[:space:]]*//; s/[[:space:]]*#.*$//')"
+
+          # What a browser does, from off-box, over the tailnet. No -k: an
+          # unverifiable certificate has to fail.
+          if curl -fsS --max-time 30 "https://${DOMAIN}/" >/dev/null; then
+            echo "OK: ${DOMAIN} answers over verified HTTPS"
+          else
+            echo "::error::${DOMAIN} did not answer over verified HTTPS"
+            FAILED=1
+          fi
+
+          # 443 must NOT be on 0.0.0.0 — the bug the vault shipped with, which
+          # here would put every transaction you own on the home LAN.
+          if ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
+            ci-deploy@"${DOMAIN}" \
+            'sudo docker port firefly-caddy' 2>/dev/null | grep -q '0\.0\.0\.0:443'; then
+            echo "::error::firefly-caddy publishes 443 on 0.0.0.0 — exposed to the whole LAN"
+            FAILED=1
+          else
+            echo "OK: 443 is not published on 0.0.0.0"
+          fi
+
+          # Both timers, because both fail silently. Without the cron one,
+          # recurring transactions and rules simply never run and nothing says so.
+          for T in firefly-healthcheck.timer firefly-cron.timer; do
+            if ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
+              ci-deploy@"${DOMAIN}" "systemctl is-active --quiet $T"; then
+              echo "OK: $T is active"
+            else
+              echo "::error::$T is not active"
+              FAILED=1
+            fi
+          done
+
+          exit $FAILED
+
       # Without this the runner just vanishes and headscale waits out
       # ephemeral.inactivity_timeout (30m) before reaping the node — which
       # leaves a dead entry holding a tailnet IP for half an hour after
@@ -441,6 +483,49 @@ jobs:
             printf 'svc_linkwarden_meili_master_key: "%s"\n'          "${SVC_LINKWARDEN_MEILI_MASTER_KEY}"
             printf 'svc_linkwarden_cloudflare_api_token: "%s"\n'      "${SVC_LINKWARDEN_CLOUDFLARE_API_TOKEN}"
           } > group_vars/links_host/secrets.yml
+
+      - name: Write the finance secrets
+        if: matrix.host == 'finance_host'
+        # Through the environment, never interpolated into the script text —
+        # GitHub substitutes ${{ secrets.X }} into shell SOURCE before bash
+        # parses it, so a base64 secret containing $ arrives mangled.
+        env:
+          SVC_FIREFLY_APP_KEY: ${{ secrets.SVC_FIREFLY_APP_KEY }}
+          SVC_FIREFLY_CRON_TOKEN: ${{ secrets.SVC_FIREFLY_CRON_TOKEN }}
+          SVC_FIREFLY_POSTGRES_PASSWORD: ${{ secrets.SVC_FIREFLY_POSTGRES_PASSWORD }}
+          SVC_FIREFLY_CLOUDFLARE_API_TOKEN: ${{ secrets.SVC_FIREFLY_CLOUDFLARE_API_TOKEN }}
+          SVC_FIREFLY_TS_AUTHKEY: ${{ secrets.SVC_FIREFLY_TS_AUTHKEY }}
+        run: |
+          for VAR in SVC_FIREFLY_APP_KEY \
+                     SVC_FIREFLY_CRON_TOKEN \
+                     SVC_FIREFLY_POSTGRES_PASSWORD \
+                     SVC_FIREFLY_CLOUDFLARE_API_TOKEN; do
+            if [ -z "${!VAR}" ]; then
+              echo "::error::${VAR} is not set — see docs/finance.md."
+              exit 1
+            fi
+          done
+
+          # Length is checked here as well as in the role, because getting it
+          # wrong is silent: Firefly accepts a short key and then fails when
+          # something is decrypted, a long way from the cause.
+          if [ ${#SVC_FIREFLY_APP_KEY} -ne 32 ]; then
+            echo "::error::SVC_FIREFLY_APP_KEY must be exactly 32 characters, is ${#SVC_FIREFLY_APP_KEY}."
+            exit 1
+          fi
+          if [ ${#SVC_FIREFLY_CRON_TOKEN} -ne 32 ]; then
+            echo "::error::SVC_FIREFLY_CRON_TOKEN must be exactly 32 characters, is ${#SVC_FIREFLY_CRON_TOKEN}."
+            exit 1
+          fi
+
+          umask 077
+          {
+            printf 'tailscale_authkey: "%s"\n'                    "${SVC_FIREFLY_TS_AUTHKEY}"
+            printf 'svc_firefly_app_key: "%s"\n'                  "${SVC_FIREFLY_APP_KEY}"
+            printf 'svc_firefly_cron_token: "%s"\n'               "${SVC_FIREFLY_CRON_TOKEN}"
+            printf 'svc_firefly_postgres_password: "%s"\n'        "${SVC_FIREFLY_POSTGRES_PASSWORD}"
+            printf 'svc_firefly_cloudflare_api_token: "%s"\n'     "${SVC_FIREFLY_CLOUDFLARE_API_TOKEN}"
+          } > group_vars/finance_host/secrets.yml
 
       - name: Run playbook
         run: ansible-playbook site.yml --limit "${{ matrix.host }}"

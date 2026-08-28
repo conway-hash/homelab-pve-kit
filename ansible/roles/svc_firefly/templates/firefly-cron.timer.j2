@@ -1,0 +1,14 @@
+# Managed by Ansible (svc_firefly) — edits will be overwritten.
+
+[Unit]
+Description=Firefly III scheduled jobs, daily
+
+[Timer]
+OnCalendar={{ firefly_cron_schedule }}
+# The host is off overnight sometimes; without this a missed run is simply
+# skipped and recurring transactions silently never appear.
+Persistent=true
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

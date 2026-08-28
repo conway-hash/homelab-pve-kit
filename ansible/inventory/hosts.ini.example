@@ -50,6 +50,16 @@ links ansible_host=1.1.1.22 ansible_user=ci-deploy
 ansible_ssh_private_key_file=~/.ssh/homelab_ci_deploy
 ansible_ssh_common_args=-o StrictHostKeyChecking=accept-new -o ProxyCommand="ssh -W %h:%p -q -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new ci-deploy@pve.ts.conway-hash.com"
 
+# Group `finance_host`, machine `finance` — same split as the others.
+[finance_host]
+# Reached by ProxyJump through the hypervisor, so a guest whose tailnet join
+# broke is still reachable by the playbook that could fix it.
+finance ansible_host=1.1.1.23 ansible_user=ci-deploy
+
+[finance_host:vars]
+ansible_ssh_private_key_file=~/.ssh/homelab_ci_deploy
+ansible_ssh_common_args=-o StrictHostKeyChecking=accept-new -o ProxyCommand="ssh -W %h:%p -q -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new ci-deploy@pve.ts.conway-hash.com"
+
 # The Obsidian sync server (VM 100) is NOT managed here and is NOT on the
 # tailnet — nothing outside the LAN can reach it. It predates this repo and
 # stays out of scope.

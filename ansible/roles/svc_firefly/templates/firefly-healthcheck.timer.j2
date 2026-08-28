@@ -1,0 +1,15 @@
+# Managed by Ansible (svc_firefly) — edits will be overwritten.
+
+[Unit]
+Description=Check finance answers every {{ firefly_selfheal_interval }}
+
+[Timer]
+# Generous first delay: on a cold boot the stack is still building, migrating
+# and starting, and a check firing into that would count healthy startup as
+# failure.
+OnBootSec=10min
+OnUnitActiveSec={{ firefly_selfheal_interval }}
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
