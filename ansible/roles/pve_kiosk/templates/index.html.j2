@@ -28,7 +28,7 @@ body{background:radial-gradient(1200px 640px at 78% -16%,#131e2c 0%,transparent 
      grid-template-rows:auto minmax(0,1fr) minmax(0,1fr);
      grid-template-areas:
        "top top  top   top"
-       "sys vms  tnet  tnet"
+       "sys vms  tnet  bkp"
        "sys vms  logs  notif";}
 .card{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);
       border-radius:11px;padding:12px 14px;overflow:hidden;position:relative;
@@ -195,6 +195,19 @@ button.pill:hover{border-color:var(--fg)}
 /* ── logs & alerts ────────────────────────────────────────────── */
 #logs{grid-area:logs}
 #notif{grid-area:notif}
+#bkp{grid-area:bkp}
+/* One job per row: its name, then the two facts that decide whether it is
+   doing what you think — when it next fires, and how many it keeps. */
+.bj{padding:7px 0;border-bottom:1px solid var(--line)}
+.bj:last-child{border-bottom:0}
+.bj .r1{display:flex;align-items:center;gap:6px}
+.bj .nm{font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bj .sc{margin-left:auto;font-size:9px;letter-spacing:.06em;text-transform:uppercase;
+        color:var(--mut);border:1px solid var(--line);border-radius:4px;padding:0 4px;flex:none}
+.bj .r2{font-size:10px;color:var(--mut);margin-top:3px;
+        font-family:"DejaVu Sans Mono",ui-monospace,monospace}
+.bj .r3{font-size:10px;color:var(--dim);margin-top:2px}
+.bj.off{opacity:.5}
 .lgh,.lg{display:grid;grid-template-columns:46px 60px 90px minmax(0,1fr);
          gap:8px;align-items:baseline}
 .lgh{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);
@@ -235,7 +248,7 @@ button.pill:hover{border-color:var(--fg)}
   body{overflow:auto}
   #app{height:auto;min-height:100vh;grid-template-columns:minmax(0,1fr);
        grid-template-rows:none;
-       grid-template-areas:"top" "sys" "vms" "tnet" "logs" "notif";}
+       grid-template-areas:"top" "sys" "vms" "tnet" "bkp" "logs" "notif";}
   .card{overflow:visible}
   #top{grid-template-columns:minmax(0,1fr);justify-items:center;text-align:center;gap:8px}
   #when{justify-self:center;text-align:center}
@@ -339,6 +352,11 @@ button.pill:hover{border-color:var(--fg)}
     <div class="t">logs</div>
     <div class="lgh"><span>time</span><span>source</span><span>who</span><span>what</span></div>
     <div class="scroll" id="loglist"></div>
+  </div>
+
+  <div id="bkp" class="card">
+    <div class="t">backup jobs</div>
+    <div class="scroll" id="bjlist"></div>
   </div>
 
   <div id="notif" class="card">
@@ -829,6 +847,34 @@ function renderAlerts(d){
     $("alist").innerHTML=html||`<div class="ok-note"><span>✓</span> all healthy</div>`;});
 }
 
+function renderBackupJobs(d){
+  const rows=(d.backup_jobs||[]).map(j=>{
+    // Proxmox keeps the comment verbatim, so a job this repo created names
+    // itself. One made by hand in the web UI may carry nothing at all, and
+    // "(unnamed)" is more honest than inventing a label for it.
+    const name=j.comment||"(unnamed)";
+    const when=j.next_run
+      ? new Date(j.next_run*1000).toLocaleString([],
+          {weekday:"short",hour:"2-digit",minute:"2-digit",hour12:false})
+      : "—";
+    // A disabled job is the failure this card exists to make visible: it looks
+    // exactly like a healthy one everywhere else, right up until you need it.
+    const off=!j.enabled;
+    return `<div class="bj${off?" off":""}">
+      <div class="r1">
+        <span class="led" style="background:${off?"var(--bad)":"var(--good)"}"></span>
+        <span class="nm">${esc(name)}</span>
+        <span class="sc">${esc(String(j.scope))}</span>
+      </div>
+      <div class="r2">${off?"DISABLED":esc(j.schedule)} → ${esc(j.storage)}</div>
+      <div class="r3">next ${esc(when)} · ${esc(j.retention)} · ${esc(j.compress)}</div>
+    </div>`;
+  }).join("");
+  keepScroll("bjlist",()=>{
+    $("bjlist").innerHTML=rows||
+      `<div class="empty-note">no backup jobs — nothing here is being backed up</div>`;});
+}
+
 function renderLogs(d){
   const rows=(d.logs||[]).map(l=>{
     const when=new Date(l.t*1000).toLocaleTimeString([],{hour12:false,hour:"2-digit",minute:"2-digit"});
@@ -867,6 +913,7 @@ function renderSlow(d){
 
   drawTailnet({...(d.tailnet||{}),control:d.control});
   renderAlerts(d);
+  renderBackupJobs(d);
   renderLogs(d);
 
   $("v_net").textContent=d.internet?"up":"down";

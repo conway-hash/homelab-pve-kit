@@ -228,6 +228,32 @@ guest id, so a failure there cannot be attributed to a single guest and will
 not colour a card. Those still appear, in red, in the **logs** card — which
 draws any failed Proxmox task that way already.
 
+## The backup jobs card
+
+The guest cards answer "did the backup run". This one answers the question
+they cannot: **is it even meant to.**
+
+```
+● homelab-pve-kit vault              999
+  sat 00:00 → tank
+  next Sat 00:00 · keep-last=4 · zstd
+```
+
+Those fail differently, which is the whole reason it is a separate card. A job
+that was never created, or was disabled, or points at a vmid that no longer
+exists, leaves every guest card looking merely *stale* — with nothing anywhere
+saying why. A disabled job is the nastiest of the three: it looks exactly like
+a healthy one everywhere else in Proxmox, right up until you need it. Here it
+goes red and says `DISABLED`.
+
+Jobs this repo created sort first and name themselves, because Proxmox keeps
+the comment field verbatim. A job made by hand in the web UI may carry no
+comment at all and shows as `(unnamed)` — inventing a nicer label for it would
+be inventing information.
+
+It reads `/cluster/backup` on the same slow clock as the archive scan, since a
+schedule changes about as often as someone edits one.
+
 ## The approve buttons
 
 The notifications panel grows buttons for the update classes that are

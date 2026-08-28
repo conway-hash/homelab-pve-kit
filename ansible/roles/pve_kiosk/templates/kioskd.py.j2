@@ -146,6 +146,7 @@ class State:
         self.guest_hist = {}
         self.tailnet = {}
         self.slow = {}
+        self.backup_jobs = []
         self.actions = deque(maxlen=40)
 
     def s(self, key):
@@ -629,6 +630,42 @@ BACKUP_CACHE = {}
 BACKUP_LAST = 0.0
 
 
+def backup_jobs():
+    """The scheduled vzdump jobs themselves — the plan, not the outcome.
+
+    The per-guest backup line answers "did it run"; this answers "is it even
+    meant to". Those fail differently: a job that was never created, or was
+    disabled, or points at a vmid that no longer exists, leaves every card
+    looking merely stale with nothing saying why.
+
+    Cheap and read on the slow backup clock, because a schedule changes about
+    as often as someone edits it.
+    """
+    out = []
+    for j in pvesh("/cluster/backup", timeout=15) or []:
+        prune = j.get("prune-backups") or {}
+        out.append({
+            "id": j.get("id"),
+            # A job this repo created carries its name in the comment; one made
+            # by hand in the web UI may carry nothing at all.
+            "comment": j.get("comment") or "",
+            "managed": (j.get("comment") or "").startswith("homelab-pve-kit "),
+            "schedule": j.get("schedule") or "",
+            "storage": j.get("storage") or "",
+            "compress": j.get("compress") or "none",
+            "mode": j.get("mode") or "",
+            "enabled": bool(j.get("enabled", 1)),
+            # `all` and `vmid` are mutually exclusive in Proxmox: a job either
+            # names guests or sweeps the node.
+            "scope": "all guests" if j.get("all") else (j.get("vmid") or "?"),
+            "exclude": j.get("exclude") or "",
+            "next_run": j.get("next-run"),
+            "retention": ", ".join(f"{k}={v}" for k, v in sorted(prune.items())) or "—",
+        })
+    out.sort(key=lambda r: (not r["managed"], r["comment"]))
+    return out
+
+
 def backup_tick():
     """Newest archive per guest, and whether the last attempt actually worked.
 
@@ -702,6 +739,9 @@ def guest_tick():
     do_agent = time.time() - AGENT_LAST >= AGENT
     if time.time() - BACKUP_LAST >= BACKUP:
         BACKUP_CACHE = backup_tick()
+        jobs = backup_jobs()
+        with ST.lock:
+            ST.backup_jobs = jobs
         BACKUP_LAST = time.time()
 
     rows = []
@@ -1087,6 +1127,7 @@ def slow_tick():
             "reboot_required": os.path.exists("/var/run/reboot-required"),
             "reboot_pkgs": read("/var/run/reboot-required.pkgs").splitlines(),
             "pve_version": sh("pveversion").strip(),
+            "backup_jobs": ST.backup_jobs,
             "logs": logs,
         }
 
