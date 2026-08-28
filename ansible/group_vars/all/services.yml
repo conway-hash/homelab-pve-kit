@@ -40,8 +40,7 @@ service_enabled:
 
   # Its own guest, VM 997. Firefly III — where the money went.
   #
-  # ⚠️ Ships OFF. It needs four secrets that only you can create (see
-  # docs/finance.md), two of which must be EXACTLY 32 characters. Turning it
-  # on before they exist gives you a deploy that fails at the first assert
-  # rather than a service.
-  finance: false
+  # Turning this off DESTROYS VM 997 on the next run of the hypervisor play,
+  # every transaction included, and removes its backup job with it. Use
+  # --check --diff first if you want warning. See docs/finance.md.
+  finance: true
