@@ -121,6 +121,18 @@ kiosk_agent_seconds: 20
 # standing in front of it.
 kiosk_backup_seconds: 300
 
+# When the kiosk's backup line turns amber and red, in hours.
+#
+# These MUST track the backup schedule in pve_guests below. They were 36h and
+# 72h while backups ran nightly; on a weekly job every card would have sat
+# permanently red, which is an alarm that means nothing and trains you to
+# ignore the one that matters.
+#
+# Weekly on Saturday means a healthy archive is 0-7 days old. 8 days means the
+# job missed its slot; 15 means it has missed two in a row.
+kiosk_backup_warn_hours: 192   # 8 days
+kiosk_backup_bad_hours: 360    # 15 days
+
 # Tailnet, HTTPS probes, pending apt updates, failed units, PVE task log.
 # All either shell out or touch the network.
 kiosk_slow_seconds: 60
@@ -334,13 +346,18 @@ pve_guests:
     # and unlike most services there is no re-deriving the contents.
     # Systemd calendar syntax, not cron.
     backup:
-      schedule: "03:30"
-      # One rolling week: seven dailies, and the eighth night drops the oldest.
-      # No weeklies or monthlies. A password vault's useful restore window is
-      # "before I broke something", which is measured in days — a month-old
-      # archive is a vault missing every password added since, and restoring it
-      # would lose more than it recovers.
-      keep_daily: 7
+      # Saturday 00:00 — the week just ended. `sat 00:00` rather than
+      # `fri 23:59`: one minute apart in practice, but a midnight boundary
+      # cannot be knocked into the wrong week by a clock that drifts a second.
+      schedule: "sat 00:00"
+      # Four weekly archives, so a month of history.
+      #
+      # ⚠️ Read this before assuming it is enough. Weekly means the worst-case
+      # loss is a whole WEEK of changes, not a day — restore on a Friday and
+      # every password added since Saturday is gone. That is a deliberate
+      # choice, not an oversight; if it ever stops being the right one, the
+      # fix is a second daily job, not a longer retention.
+      keep_last: 4
 
   - name: links
     service: links
@@ -360,8 +377,9 @@ pve_guests:
     # comes back from a power cut the machine holding your passwords should be
     # the one that gets the disk first.
     startup_order: 20
-    # Same rolling week as the vault. Bookmarks are re-collectable in theory
-    # and never in practice.
+    # Same cadence as the vault. Both jobs land on the same minute; Proxmox
+    # serialises vzdump per node, so the second simply queues behind the first
+    # rather than contending with it.
     backup:
-      schedule: "04:00"
-      keep_daily: 7
+      schedule: "sat 00:00"
+      keep_last: 4

@@ -198,14 +198,16 @@ backup   ●  6h ago · 1.7G · 7 kept
 
 | Colour | Means |
 |---|---|
-| green | newest archive under 36h old, last `vzdump` succeeded |
-| amber | 36–72h old, or no archive has ever been taken |
-| red | over 72h old, or the last `vzdump` for that guest **failed** |
+| green | newer than `kiosk_backup_warn_hours`, last `vzdump` succeeded |
+| amber | older than that, or no archive has ever been taken |
+| red | older than `kiosk_backup_bad_hours`, or the last `vzdump` **failed** |
 
-36h rather than 24h on purpose. A nightly job, a slow archive and a little
-clock drift still leave a perfectly healthy guest at hour 25, and an indicator
-that goes amber on an ordinary night is one nobody reads on the night it
-matters.
+Both thresholds are vars, declared beside the backup schedule they describe,
+because they only mean anything relative to it. Backups are weekly (Saturday
+00:00), so healthy is 0-7 days, 8 days means a missed slot and 15 means two.
+When they were hardcoded at 36h/72h for a nightly job, moving to weekly would
+have left every card permanently red — an alarm that means nothing, which is
+worse than no alarm at all.
 
 The same conditions are raised in the **alerts** card, so a failed or missing
 backup is visible without hunting through the guest tabs.

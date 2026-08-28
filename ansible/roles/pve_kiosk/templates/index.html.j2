@@ -551,11 +551,12 @@ $("tabs").addEventListener("pointerdown",e=>{
   tab=b.dataset.tab; paintTabs(); renderGuests();
 });
 
-/* Green under 36h, not 24h. A nightly job plus a slow archive plus a little
-   clock drift is still perfectly healthy at hour 25, and an indicator that
-   goes amber on an ordinary night is one nobody reads on the night it
-   matters. */
-const BK_WARN=36*3600, BK_BAD=72*3600;
+/* Templated from kiosk_backup_warn_hours / kiosk_backup_bad_hours rather than
+   hardcoded, because they only mean anything relative to the backup SCHEDULE.
+   They were 36h and 72h while backups ran nightly; the move to weekly would
+   have left every card permanently red — an alarm that means nothing, which
+   is worse than no alarm at all. Both live beside the schedule they track. */
+const BK_WARN={{ kiosk_backup_warn_hours }}*3600, BK_BAD={{ kiosk_backup_bad_hours }}*3600;
 
 function backupLine(g){
   const b=g.backup;

@@ -107,8 +107,8 @@ it gets a checklist.
    thing to check afterwards.
 
 3. **Take a backup if you are about to do something bigger than a kernel.**
-   The nightly job runs at 03:30 and keeps 7 rolling dailies, so there is
-   almost always a recent one. On demand:
+   The weekly job runs Saturday 00:00 and keeps the last 4, so the newest
+   one can be up to a week old. Before anything risky, take one on demand:
 
    ```bash
    ssh ci-deploy@pve.ts.conway-hash.com 'sudo vzdump 999 --storage tank --mode snapshot --compress zstd'

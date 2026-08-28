@@ -17,7 +17,7 @@ service_enabled:
 | Settings | `ansible/group_vars/vault_host/vars.yml` |
 | Secrets | `ansible/group_vars/vault_host/secrets.yml` (git-ignored) |
 | Reachable at | `https://vault.ts.conway-hash.com`, tailnet only |
-| Backed up to | `tank` (ZFS on sda), nightly 03:30, zstd, 7 rolling dailies |
+| Backed up to | `tank` (ZFS on sda), weekly Sat 00:00, zstd, last 4 kept |
 
 ## Why a VM and not an LXC container
 

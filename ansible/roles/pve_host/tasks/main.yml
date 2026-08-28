@@ -141,7 +141,7 @@
       - --schedule={{ item.backup.schedule }}
       - --mode={{ pve_backup_mode }}
       - --compress={{ pve_backup_compress }}
-      - --prune-backups=keep-daily={{ item.backup.keep_daily }}
+      - --prune-backups=keep-last={{ item.backup.keep_last }}
       - --enabled=1
       - --notification-mode=notification-system
   # Derived from the guest list rather than a parallel list of its own, so a
@@ -179,7 +179,7 @@
       - --schedule={{ item.backup.schedule }}
       - --mode={{ pve_backup_mode }}
       - --compress={{ pve_backup_compress }}
-      - --prune-backups=keep-daily={{ item.backup.keep_daily }}
+      - --prune-backups=keep-last={{ item.backup.keep_last }}
       - --enabled=1
   loop: "{{ pve_host_backup_wanted }}"
   loop_control:
@@ -204,7 +204,7 @@
       or _job.mode | default('') != pve_backup_mode
       or _job.compress | default('') != pve_backup_compress
       or (_job['prune-backups'] | default({}))
-         != {'keep-daily': item.backup.keep_daily | string}
+         != {'keep-last': item.backup.keep_last | string}
   changed_when: true
 
 # The counterpart to the two tasks above. Switching a service off destroys its

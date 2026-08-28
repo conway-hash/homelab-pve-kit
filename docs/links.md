@@ -17,7 +17,7 @@ service_enabled:
 | Settings | `ansible/group_vars/links_host/vars.yml` |
 | Secrets | `ansible/group_vars/links_host/secrets.yml` (git-ignored) |
 | Reachable at | `https://links.ts.conway-hash.com`, tailnet only |
-| Backed up to | `tank`, nightly 04:00, zstd, 7 rolling dailies |
+| Backed up to | `tank`, weekly Sat 00:00, zstd, last 4 kept |
 
 ## Why Linkwarden and not linkding
 
