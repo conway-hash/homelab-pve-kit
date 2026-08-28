@@ -249,48 +249,6 @@ jobs:
 
           exit $FAILED
 
-      - name: Smoke test — finance
-        if: matrix.host == 'finance_host'
-        run: |
-          FAILED=0
-
-          DOMAIN="finance.$(grep '^tailnet_base_domain:' group_vars/all/vars.yml \
-            | sed 's/^tailnet_base_domain:[[:space:]]*//; s/[[:space:]]*#.*$//')"
-
-          # What a browser does, from off-box, over the tailnet. No -k: an
-          # unverifiable certificate has to fail.
-          if curl -fsS --max-time 30 "https://${DOMAIN}/" >/dev/null; then
-            echo "OK: ${DOMAIN} answers over verified HTTPS"
-          else
-            echo "::error::${DOMAIN} did not answer over verified HTTPS"
-            FAILED=1
-          fi
-
-          # 443 must NOT be on 0.0.0.0 — the bug the vault shipped with, which
-          # here would put every transaction you own on the home LAN.
-          if ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
-            ci-deploy@"${DOMAIN}" \
-            'sudo docker port firefly-caddy' 2>/dev/null | grep -q '0\.0\.0\.0:443'; then
-            echo "::error::firefly-caddy publishes 443 on 0.0.0.0 — exposed to the whole LAN"
-            FAILED=1
-          else
-            echo "OK: 443 is not published on 0.0.0.0"
-          fi
-
-          # Both timers, because both fail silently. Without the cron one,
-          # recurring transactions and rules simply never run and nothing says so.
-          for T in firefly-healthcheck.timer firefly-cron.timer; do
-            if ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
-              ci-deploy@"${DOMAIN}" "systemctl is-active --quiet $T"; then
-              echo "OK: $T is active"
-            else
-              echo "::error::$T is not active"
-              FAILED=1
-            fi
-          done
-
-          exit $FAILED
-
       # Without this the runner just vanishes and headscale waits out
       # ephemeral.inactivity_timeout (30m) before reaping the node — which
       # leaves a dead entry holding a tailnet IP for half an hour after
@@ -642,6 +600,48 @@ jobs:
             echo "::error::linkwarden-healthcheck.timer is not active — a wedged stack would never be restarted"
             FAILED=1
           fi
+
+          exit $FAILED
+
+      - name: Smoke test — finance
+        if: matrix.host == 'finance_host'
+        run: |
+          FAILED=0
+
+          DOMAIN="finance.$(grep '^tailnet_base_domain:' group_vars/all/vars.yml \
+            | sed 's/^tailnet_base_domain:[[:space:]]*//; s/[[:space:]]*#.*$//')"
+
+          # What a browser does, from off-box, over the tailnet. No -k: an
+          # unverifiable certificate has to fail.
+          if curl -fsS --max-time 30 "https://${DOMAIN}/" >/dev/null; then
+            echo "OK: ${DOMAIN} answers over verified HTTPS"
+          else
+            echo "::error::${DOMAIN} did not answer over verified HTTPS"
+            FAILED=1
+          fi
+
+          # 443 must NOT be on 0.0.0.0 — the bug the vault shipped with, which
+          # here would put every transaction you own on the home LAN.
+          if ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
+            ci-deploy@"${DOMAIN}" \
+            'sudo docker port firefly-caddy' 2>/dev/null | grep -q '0\.0\.0\.0:443'; then
+            echo "::error::firefly-caddy publishes 443 on 0.0.0.0 — exposed to the whole LAN"
+            FAILED=1
+          else
+            echo "OK: 443 is not published on 0.0.0.0"
+          fi
+
+          # Both timers, because both fail silently. Without the cron one,
+          # recurring transactions and rules simply never run and nothing says so.
+          for T in firefly-healthcheck.timer firefly-cron.timer; do
+            if ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
+              ci-deploy@"${DOMAIN}" "systemctl is-active --quiet $T"; then
+              echo "OK: $T is active"
+            else
+              echo "::error::$T is not active"
+              FAILED=1
+            fi
+          done
 
           exit $FAILED
 
