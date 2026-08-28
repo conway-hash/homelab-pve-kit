@@ -224,37 +224,34 @@
     state: started
     daemon_reload: true
 
-- name: Wait for the guest's own tailnet name to resolve
-  # Before asking whether the stack serves, wait until this guest can look
-  # itself up. MagicDNS has to replace the cloud-init nameserver
-  # (pve_lan_dns_servers, the LAN gateway, which knows nothing about
-  # .ts names) before that works, and on a freshly joined node it is a race.
+# noqa is the FIRST in this repo, so it earns an explanation: the rule exists
+# to stop people shelling out to curl where the uri module would do, and here
+# the uri module provably would not. It resolves through the guest's resolver
+# and failed sixty times in CI against a healthy stack, in the same play where
+# a getent for the same name succeeded. curl --resolve is the only way to ask
+# "is this serving" without also asking "has DNS converged".
+- name: Wait for Linkwarden to answer over HTTPS  # noqa: command-instead-of-module
+  # curl through the loopback publish, NOT the uri module against the public
+  # name, and the distinction is load-bearing.
   #
-  # That race lost on the finance guest's first deploy: sixty retries over ten
-  # minutes, every one of them "No address associated with hostname", against
-  # a stack that was already serving perfectly and had a valid certificate.
-  # The check below then reports a broken service when nothing is broken,
-  # which is the most expensive kind of false alarm — it sends you looking in
-  # the wrong place.
-  ansible.builtin.command: getent hosts {{ linkwarden_domain }}
-  register: svc_linkwarden_dns
-  until: svc_linkwarden_dns is success
-  retries: 30
-  delay: 10
-  changed_when: false
-
-- name: Wait for Linkwarden to answer over HTTPS
-  # The real thing a browser does, end to end: a valid certificate for the real
-  # hostname, terminated by Caddy, proxied to an app that is awake.
+  # uri resolves through the guest's own resolver. In CI that failed sixty
+  # times over ten minutes with "No address associated with hostname" against
+  # a stack that was up, healthy and holding a valid certificate — while a
+  # `getent hosts` for the same name, run seconds earlier in the same play,
+  # succeeded. Whatever the runner does to the tailnet mid-deploy, this check
+  # should not be the thing that discovers it.
   #
-  # First convergence includes an ACME issuance, a Caddy build and the app's
-  # database migrations, hence the patient retry. An unauthenticated request is
-  # answered with a redirect to the login page — that redirect is the app being
-  # alive, so it counts.
-  ansible.builtin.uri:
-    url: "https://{{ linkwarden_domain }}/"
-    status_code: [200, 302, 307]
-    follow_redirects: none
+  # So it asks the only question it is actually here to answer — is the stack
+  # serving — by the same route healthcheck.sh uses, with no DNS in the path.
+  # --resolve still pins SNI, so the certificate is genuinely verified rather
+  # than skipped. The real client path (MagicDNS, over the tailnet, from
+  # off-box) is what the deploy's smoke test checks, which is the right place
+  # for it: that test failing means something a user would notice, where this
+  # one failing only ever meant Ansible could not look up a name.
+  ansible.builtin.command: >-
+    curl -fsS --max-time 15
+    --resolve {{ linkwarden_domain }}:443:127.0.0.1
+    https://{{ linkwarden_domain }}/
   register: svc_linkwarden_alive
   until: svc_linkwarden_alive is success
   retries: 60
