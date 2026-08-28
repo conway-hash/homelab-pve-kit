@@ -224,6 +224,25 @@
     state: started
     daemon_reload: true
 
+- name: Wait for the guest's own tailnet name to resolve
+  # Before asking whether the stack serves, wait until this guest can look
+  # itself up. MagicDNS has to replace the cloud-init nameserver
+  # (pve_lan_dns_servers, the LAN gateway, which knows nothing about
+  # .ts names) before that works, and on a freshly joined node it is a race.
+  #
+  # That race lost on the finance guest's first deploy: sixty retries over ten
+  # minutes, every one of them "No address associated with hostname", against
+  # a stack that was already serving perfectly and had a valid certificate.
+  # The check below then reports a broken service when nothing is broken,
+  # which is the most expensive kind of false alarm — it sends you looking in
+  # the wrong place.
+  ansible.builtin.command: getent hosts {{ linkwarden_domain }}
+  register: svc_linkwarden_dns
+  until: svc_linkwarden_dns is success
+  retries: 30
+  delay: 10
+  changed_when: false
+
 - name: Wait for Linkwarden to answer over HTTPS
   # The real thing a browser does, end to end: a valid certificate for the real
   # hostname, terminated by Caddy, proxied to an app that is awake.
