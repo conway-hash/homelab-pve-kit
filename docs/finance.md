@@ -45,15 +45,48 @@ two is a job for the assistant, not for Firefly.
 Two steps, and the second cannot be done before the first:
 
 1. **This deploy** brings up Firefly itself. Log in, create your account.
-2. **The Data Importer** is a separate container that talks to GoCardless
-   (ex-Nordigen) for EU bank feeds, and to CSV. It authenticates with a
-   Personal Access Token that only exists once you have logged in, so it is
-   deliberately not part of this first deploy.
+2. **The Data Importer** runs beside Firefly on port 8443 and pulls
+   transactions in. It authenticates with a Firefly Personal Access Token,
+   which cannot exist until someone has logged in and made one — which is why
+   it is a separate step rather than part of the first deploy.
 
-⚠️ For the bank side, use **GoCardless Bank Account Data**, not a direct bank
-API. It is PSD2 *Account Information* only — structurally incapable of moving
-money — where a bank or broker key often is not. For Trading 212, use a
-**read-only** key and never one with order permissions.
+### Use an aggregator, not the bank's own API
+
+⚠️ **Not GoCardless.** It closed its free tier to new signups in 2026. Use
+**Enable Banking** in *restricted mode*: free, your own accounts only, and no
+eIDAS certificate. Direct access to a bank's regulated API needs a qualified
+certificate (€2,000–10,000/year) plus TPP registration with the regulator —
+which is the entire reason aggregators exist.
+
+⚠️ **Not the bank's commercial API either.** Slovenská sporiteľňa's
+"Databanking" is a B2B product for accounting-software vendors and wants a
+company and a contract. It is the wrong door.
+
+Whichever aggregator, it is PSD2 *Account Information* only — structurally
+incapable of moving money, where a bank or broker key often is not.
+
+Setting it up:
+
+1. Register an application at Enable Banking, **Production**, and save the
+   private key it gives you once.
+2. Its redirect URL must be
+   `https://finance.ts.conway-hash.com:8443/eb-callback` — the port is
+   `firefly_importer_port`, and changing one means changing the other.
+3. The key goes in as a single base64 line (PEM body, no header/footer/
+   newlines). The importer accepts a path or a raw PEM too, but base64 is the
+   only form that is both a single-line env value and needs no file whose
+   permissions must match whatever uid the container runs as.
+
+⚠️ **PSD2 consent expires every ~90 days.** Every open-banking connection in
+Europe does; you re-authorise in the bank's app. Not a Firefly limitation and
+not something any provider can waive.
+
+### What it will not cover
+
+Brokers are not banks. **Trading 212 and XTB are not PSD2 institutions**, so
+no aggregator reaches them — they have their own read-only APIs instead, and
+belong in an assistant tool or a manually-updated asset account rather than in
+the bank feed.
 
 ---
 

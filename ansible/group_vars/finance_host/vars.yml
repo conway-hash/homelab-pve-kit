@@ -24,6 +24,23 @@ firefly_timezone: Europe/Prague
 # renovate: datasource=docker depName=fireflyiii/core
 firefly_version: "version-6.6.6"
 
+# The Data Importer — a separate app that pulls transactions in from banks via
+# Enable Banking, and from CSV. Deliberately a separate deploy from Firefly
+# itself: it authenticates with a Firefly access token, and that token cannot
+# exist until someone has logged in and made one.
+# renovate: datasource=docker depName=fireflyiii/data-importer
+firefly_importer_version: "version-2.3.4"
+
+# Its own port rather than its own hostname. MagicDNS resolves <node>.ts.<domain>
+# and nothing below it, so import.finance.ts.… would resolve for nobody. A port
+# gives it a distinct origin under a name that does resolve, which keeps its
+# session cookies from colliding with Firefly's.
+#
+# ⚠️ This is baked into the redirect URL registered with Enable Banking
+# (https://<domain>:<port>/eb-callback). Changing it means changing it there
+# too, or the bank redirect lands nowhere.
+firefly_importer_port: 8443
+
 # renovate: datasource=docker depName=postgres
 firefly_postgres_version: "16-alpine"
 

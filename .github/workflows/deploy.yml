@@ -453,6 +453,9 @@ jobs:
           SVC_FIREFLY_POSTGRES_PASSWORD: ${{ secrets.SVC_FIREFLY_POSTGRES_PASSWORD }}
           SVC_FIREFLY_CLOUDFLARE_API_TOKEN: ${{ secrets.SVC_FIREFLY_CLOUDFLARE_API_TOKEN }}
           SVC_FIREFLY_TS_AUTHKEY: ${{ secrets.SVC_FIREFLY_TS_AUTHKEY }}
+          SVC_FIREFLY_ACCESS_TOKEN: ${{ secrets.SVC_FIREFLY_ACCESS_TOKEN }}
+          SVC_FIREFLY_EB_APP_ID: ${{ secrets.SVC_FIREFLY_EB_APP_ID }}
+          SVC_FIREFLY_EB_PRIVATE_KEY: ${{ secrets.SVC_FIREFLY_EB_PRIVATE_KEY }}
         run: |
           for VAR in SVC_FIREFLY_APP_KEY \
                      SVC_FIREFLY_CRON_TOKEN \
@@ -483,6 +486,12 @@ jobs:
             printf 'svc_firefly_cron_token: "%s"\n'               "${SVC_FIREFLY_CRON_TOKEN}"
             printf 'svc_firefly_postgres_password: "%s"\n'        "${SVC_FIREFLY_POSTGRES_PASSWORD}"
             printf 'svc_firefly_cloudflare_api_token: "%s"\n'     "${SVC_FIREFLY_CLOUDFLARE_API_TOKEN}"
+            # The importer trio. Absent is fine — the role asserts they are
+            # all set or all unset, so an importer that is not configured yet
+            # simply is not configured, rather than half-configured.
+            printf 'svc_firefly_access_token: "%s"\n'            "${SVC_FIREFLY_ACCESS_TOKEN}"
+            printf 'svc_firefly_eb_app_id: "%s"\n'               "${SVC_FIREFLY_EB_APP_ID}"
+            printf 'svc_firefly_eb_private_key: "%s"\n'          "${SVC_FIREFLY_EB_PRIVATE_KEY}"
           } > group_vars/finance_host/secrets.yml
 
       - name: Run playbook

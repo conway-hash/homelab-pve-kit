@@ -40,6 +40,23 @@
       ACME DNS-01 challenge and will never obtain a certificate. Mint a
       SEPARATE token from the other services' — see docs/finance.md.
 
+- name: Refuse to deploy a half-configured importer
+  # All three or none. Two out of three gets you a stack that comes up, looks
+  # healthy, and fails only at the moment you try to connect a bank — which is
+  # the least convenient moment to discover a missing credential.
+  ansible.builtin.assert:
+    that: >-
+      (svc_firefly_access_token | length > 0)
+      == (svc_firefly_eb_app_id | length > 0)
+      and (svc_firefly_eb_app_id | length > 0)
+      == (svc_firefly_eb_private_key | length > 0)
+    fail_msg: >-
+      The Data Importer needs svc_firefly_access_token, svc_firefly_eb_app_id
+      and svc_firefly_eb_private_key together, and exactly
+      {{ [svc_firefly_access_token, svc_firefly_eb_app_id,
+          svc_firefly_eb_private_key] | select('!=', '') | list | length }}
+      of the three are set. See docs/finance.md.
+
 # ── What the stack is allowed to listen on ───────────────────────────
 
 - name: Read the guest's tailnet address
@@ -121,6 +138,7 @@
     - firefly.env
     - postgres.env
     - caddy.env
+    - importer.env
   no_log: true
   notify: Restart the firefly stack
 

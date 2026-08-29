@@ -29,3 +29,27 @@ svc_firefly_postgres_password: ""
 # zone and permissions as the others, but revoking one must not take the rest
 # down, and the audit log should say which service wrote which record.
 svc_firefly_cloudflare_api_token: ""
+
+# ── Data Importer ────────────────────────────────────────────────────
+#
+# All three are only needed once the importer is in use. They are asserted
+# together in tasks/main.yml, so a half-configured importer fails at deploy
+# rather than at the moment you try to connect a bank.
+
+# A Firefly III Personal Access Token, made under
+# Options -> Remote access and tokens. It is full API access to every
+# transaction in the instance, which is why it is a secret and not a var.
+svc_firefly_access_token: ""
+
+# The Enable Banking application UUID. Not secret on its own, but it is
+# useless without the key below and they belong together.
+svc_firefly_eb_app_id: ""
+
+# The RSA private key that signs Enable Banking API requests, as a single
+# base64 line: the PEM body with header, footer and newlines stripped. The
+# importer accepts a path, a raw PEM or this — this is the only form that is
+# both a single-line env value and needs no file whose permissions have to
+# match whatever uid the container runs as.
+#
+#   grep -v -- ----- key.pem | tr -d '\n'
+svc_firefly_eb_private_key: ""

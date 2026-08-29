@@ -34,3 +34,19 @@
 		}
 	}
 }
+
+# The data importer, on its own port. Same certificate — same hostname — but a
+# separate origin, so its session and Firefly's cannot collide.
+{{ firefly_domain }}:{{ firefly_importer_port }} {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+		resolvers {{ acme_dns_resolvers | join(' ') }}
+	}
+
+	reverse_proxy importer:8080
+
+	# A CSV export from a bank can be large, and so can a year of statements.
+	request_body {
+		max_size {{ firefly_max_upload }}
+	}
+}

@@ -57,6 +57,18 @@ services:
       retries: 10
       start_period: 30s
 
+  importer:
+    image: fireflyiii/data-importer:{{ firefly_importer_version }}
+    container_name: firefly-importer
+    restart: unless-stopped
+    env_file:
+      - path: ./importer.env
+        format: raw
+    depends_on:
+      - firefly
+    # No `ports:`. Reached only by Caddy, which fronts it on
+    # {{ firefly_importer_port }} — see the second site block in the Caddyfile.
+
   caddy:
     build:
       context: .
@@ -79,6 +91,12 @@ services:
       # Loopback as well, and load-bearing twice over: healthcheck.sh and the
       # nightly cron timer both reach Firefly through it.
       - "127.0.0.1:443:443"
+      # The importer, on its own port rather than its own hostname: MagicDNS
+      # resolves <node>.ts.<domain> and nothing below it, so import.finance.…
+      # would not resolve for anyone. A port is the cheap way to give it a
+      # distinct origin under a name that does resolve.
+      - "{{ svc_firefly_tailnet_ip.stdout | trim }}:{{ firefly_importer_port }}:{{ firefly_importer_port }}"
+      - "127.0.0.1:{{ firefly_importer_port }}:{{ firefly_importer_port }}"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./caddy-data:/data
