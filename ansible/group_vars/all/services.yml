@@ -47,7 +47,7 @@ service_enabled:
   ntfy: true
 
   # Its own guest, VM 997. Reads the hypervisor over the Proxmox API, decides
-  # what needs doing, pushes it to `notify`, and serves the dashboard the
+  # what needs doing, pushes it to `ntfy`, and serves the dashboard the
   # physical screen shows.
   #
   # Replaced the kiosk, which did the same job on the hypervisor itself and
@@ -57,11 +57,7 @@ service_enabled:
   # Turning this off DESTROYS VM 997 on the next run of the hypervisor play,
   # and leaves the monitor showing an error page unless `screen` goes with it.
   #
-  # ⚠️ OFF until its credentials exist, and turn `notify` on first or the first
-  # alerts have nowhere to go. It needs its OWN Proxmox token — not the
-  # privsep-0 one that creates guests. See "Before you turn it on" in
-  # docs/watch.md.
-  watch: false
+  watch: true
 
   # Its own guest, VM 999. Turning this off DESTROYS that VM on the next run
   # of the hypervisor play — use --check --diff first if you want warning.

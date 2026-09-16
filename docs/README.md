@@ -49,7 +49,7 @@ secret and the doc that explains it, before it changes anything on the host.
 
 Set the flag to `false`. What that means depends on where the service lives:
 
-**A service on its own guest** (`vault`, `notify`, `watch`): the `pve_guests` role
+**A service on its own guest** (`vault`, `ntfy`, `watch`): the `pve_guests` role
 **destroys the VM** on the next run, disk included. Run with `--check --diff`
 first if you want to see it coming. Existing archives on `tank` outlive the
 guest, but restoring one is a manual job.

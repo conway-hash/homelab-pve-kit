@@ -280,7 +280,7 @@ service_enabled:
 
 ⚠️ `watch` needs its own Proxmox API token — **not** the one from step 6, which
 is `privsep 0` and can destroy every guest on the box. The `pveum` commands for
-a narrower one are in [docs/watch.md](docs/watch.md). And turn `notify` on
+a narrower one are in [docs/watch.md](docs/watch.md). And turn `ntfy` on
 first, or `watch` has nowhere to send what it finds.
 
 Each doc lists what that service needs **before** you turn it on — its

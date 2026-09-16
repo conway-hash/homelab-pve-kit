@@ -103,12 +103,12 @@ repository changes. Not something to do because a number went up.
 The reboot itself is the only routinely disruptive thing in this document, so
 it gets a checklist.
 
-1. **Know what goes down.** Every guest — `vault` (999), `notify` (998) and
+1. **Know what goes down.** Every guest — `vault` (999), `ntfy` (998) and
    `watch` (997). Your password manager is unreachable for the duration; the
    Bitwarden clients cache your vault locally and keep working offline, but a
    fresh login will not.
 
-   Note that `notify` and `watch` go down too, so **the reboot you started is
+   Note that `ntfy` and `watch` go down too, so **the reboot you started is
    the one thing that cannot alert you about itself.** Expect silence, not
    reassurance, and check afterwards.
 

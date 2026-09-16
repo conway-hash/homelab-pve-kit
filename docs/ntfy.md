@@ -69,7 +69,7 @@ identical to a working one from the outside.
 
 ## Before you turn it on
 
-Three credentials, in the `notify` GitHub Environment as one `SERVICE_SECRETS`
+Three credentials, in the `ntfy` GitHub Environment as one `SERVICE_SECRETS`
 bundle (see [vault.md](vault.md) for the format):
 
 ```yaml
