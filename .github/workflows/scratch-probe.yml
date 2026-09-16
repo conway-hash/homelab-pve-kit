@@ -1,0 +1,19 @@
+name: Scratch Probe
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Count secrets without printing any value
+        env:
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+        run: |
+          python3 -c "
+          import json, os
+          d = json.loads(os.environ['ALL_SECRETS'])
+          print('secret count:', len(d))
+          print('names:', ', '.join(sorted(d)))
+          "
