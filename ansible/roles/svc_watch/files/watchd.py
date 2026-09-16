@@ -288,6 +288,17 @@ def http_status(url, timeout=6):
 
 # ── Collection ───────────────────────────────────────────────────────
 
+def _version_tuple(text):
+    """A Debian-ish version as a tuple of ints, for comparison.
+
+    String comparison is wrong here and quietly so: `7.0.14-9` sorts after
+    `7.0.14-17` because `9` > `1`. Splitting on non-digits and comparing
+    numerically is enough for kernel versions, which is all this is used for.
+    """
+    parts = [int(n) for n in re.findall(r"\d+", text or "")]
+    return tuple(parts) if parts else ()
+
+
 def _pct(used, total):
     return round(used / total * 100, 1) if total else 0.0
 
@@ -567,25 +578,34 @@ def collect():
     # ── is a reboot pending ──
     #
     # /var/run/reboot-required is a file on the host and this API has no
-    # endpoint for it. apt/versions does carry a RunningKernel flag, which
-    # answers the same question from the other side: the kernel package that is
-    # installed is not the one currently booted.
+    # endpoint for it, so the question is asked from the other side: is a kernel
+    # package installed that is newer than the one currently booted.
+    #
+    # NOT via the RunningKernel flag, which the docs imply is the obvious hook.
+    # On this node it is null on every single package including the running
+    # one, so a filter built on it silently treats every installed kernel as
+    # newer and lights the pill permanently.
+    #
+    # Compared on the Version FIELD, not the package name. The name of the
+    # running kernel's own package sorts after the running release as a string
+    # — `7.0.14-14-pve-signed` > `7.0.14-14-pve` — which reported a reboot
+    # pending and then cited the kernel already running as the reason.
     running_kernel = (state["host"].get("kernel") or {}).get("release") or ""
-    # Without a running kernel to compare against, EVERY installed kernel
-    # package sorts as newer than the empty string and the pill would light up
-    # permanently. Not knowing is not the same as pending.
-    kernel_pkgs = [] if not running_kernel else [
-        v for v in attempt("apt_versions", PVE.apt_versions, [])
-        if (v.get("Package") or "").startswith(("proxmox-kernel-", "pve-kernel-"))
-    ]
-    newer = sorted(
-        (v.get("Package", "") for v in kernel_pkgs
-         if not v.get("RunningKernel")
-         and (v.get("Package") or "").replace("proxmox-kernel-", "")
-             .replace("pve-kernel-", "") > running_kernel),
-    )
+    running_v = _version_tuple(running_kernel)
+    newer = []
+    if running_v:
+        for v in attempt("apt_versions", PVE.apt_versions, []):
+            pkg = v.get("Package") or ""
+            # `-helper` is a tooling package that happens to match the prefix
+            # and carries its own unrelated version (9.2.0), which outranks
+            # every real kernel.
+            if not re.match(r"^(proxmox|pve)-kernel-\d", pkg):
+                continue
+            if _version_tuple(v.get("Version") or "") > running_v:
+                newer.append(f"{pkg} ({v.get('Version')})")
     state["reboot_pending"] = bool(newer)
-    state["reboot_for"] = newer[:5]
+    state["reboot_for"] = sorted(set(newer))[:5]
+    state["running_kernel"] = running_kernel
 
     # ── recent node activity, for the log panel ──
     logs = []
