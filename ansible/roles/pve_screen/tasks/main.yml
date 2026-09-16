@@ -61,6 +61,42 @@
       fi
   notify: Restart the screen session
 
+# ── Make the RUNNING session match the file ──────────────────────────
+#
+# A handler only fires when the task above reports a change, which leaves a gap
+# this role fell straight into: the profile was rewritten to the new URL, the
+# handler restarted the session, and the next run found the file already correct
+# — so nothing fired, and a session still showing the OLD url kept showing it.
+# Converged config, unconverged reality, and no output saying so.
+#
+# So this reads what is actually on the glass and reconciles it, the same way
+# pve_guests reads the running config before deciding what changed.
+
+- name: Read what the screen is currently showing
+  ansible.builtin.command: pgrep -a -x cage
+  register: pve_screen_running
+  changed_when: false
+  check_mode: false
+  # pgrep exits 1 when nothing matches, which is the normal state on a box
+  # whose screen has never been started.
+  failed_when: false
+
+- name: Restart the screen session if it is showing the wrong thing
+  # Covers both "pointing at the old URL" and "not running at all". Restarting
+  # the getty ends the login session; agetty respawns it, autologin re-runs
+  # .bash_profile, and cage comes up against the URL that is actually in the
+  # file now.
+  #
+  # ⚠️ This ends whatever is on tty1, including a shell someone is typing into
+  # at the console. For a screen whose entire job is displaying one page that is
+  # the right trade, but it is worth knowing before running this while standing
+  # in front of the machine.
+  ansible.builtin.systemd_service:
+    name: getty@tty1.service
+    state: restarted
+  when: watch_domain not in (pve_screen_running.stdout | default(''))
+  changed_when: true
+
 # ── Retiring the kiosk ───────────────────────────────────────────────
 #
 # Ansible has no undo: deleting the pve_kiosk role stops it being CONVERGED,
