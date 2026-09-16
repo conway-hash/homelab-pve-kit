@@ -56,8 +56,6 @@ service_enabled:
 | Service | Flag | Runs on | Docs |
 |---|---|---|---|
 | Vaultwarden | `vault` | its own guest, VM 999 | [docs/vault.md](docs/vault.md) |
-| Linkwarden | `links` | its own guest, VM 998 | [docs/links.md](docs/links.md) |
-| Firefly III | `finance` | its own guest, VM 997 | [docs/finance.md](docs/finance.md) |
 | Kiosk dashboard | `kiosk` | the hypervisor | [docs/kiosk.md](docs/kiosk.md) |
 
 Keeping the host patched is [docs/updates.md](docs/updates.md): security
@@ -99,8 +97,9 @@ rest of the design already accounts for it.
 
 ## Scope
 
-The hypervisor, plus guests **created by this repo**. VM 100 (Obsidian
-sync + DB) predates it, stays on the LAN, and is not managed here.
+The hypervisor, plus guests **created by this repo**. Anything clicked
+together by hand in the Proxmox web UI is out of scope and is neither
+converged nor destroyed here.
 
 No state file, no backend, no cloud account. The only thing this repo needs
 beyond the Proxmox box itself is a tailnet to reach it over.

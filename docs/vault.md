@@ -149,23 +149,27 @@ curl -s https://vault.ts.conway-hash.com/api/config | jq .
 ```
 
 ⚠️ Check the backup actually ran before you trust the vault with anything.
-`pve_host` creates a nightly `vzdump` job, but a job that has never succeeded
+`pve_host` creates a weekly `vzdump` job, but a job that has never succeeded
 is not a backup:
 
 ```bash
 ssh ci-deploy@pve.ts.conway-hash.com 'sudo ls -la /tank/dump/'
 ```
 
-⚠️ This host also carries a hand-made, all-guests backup job (02:30 → `tank`,
-`keep-last 7`) that predates this repo and is **not** managed by it — it is
-what covers the unmanaged VM 100. It backs the vault up a second time, which
-costs ~1.8G a night and a second snapshot freeze but is otherwise harmless. To
-stop that, exclude the vault from it by hand; there is deliberately no Ansible
-task for this, because the repo does not own jobs it did not create:
+⚠️ This host also carries a hand-made, all-guests backup job (`sat 00:00` →
+`tank`, `keep-last 4`) that predates this repo and is **not** managed by it.
+Its original job was to cover the hand-made guests in the 100-range; now that
+none exist, the only live guest it still catches is the vault — which
+`pve_host` already backs up on the same schedule. So it now does nothing but
+take a second ~1.8G archive and a second snapshot freeze every Saturday.
+
+Removing it is a one-liner, and safe: the repo's own vault job is unaffected.
+There is deliberately no Ansible task for this, because the repo does not own
+jobs it did not create:
 
 ```bash
 ssh ci-deploy@pve.ts.conway-hash.com \
-  'sudo pvesh set /cluster/backup/backup-2731efbf-8ff9 --exclude=999'
+  'sudo pvesh delete /cluster/backup/backup-2731efbf-8ff9'
 ```
 
 Archives are `.vma.zst` (~1.8G). If you ever see a bare `.vma` (~4.9G), the

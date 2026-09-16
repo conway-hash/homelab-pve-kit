@@ -29,18 +29,3 @@ service_enabled:
   # of the hypervisor play — use --check --diff first if you want warning.
   # See docs/vault.md.
   vault: true
-
-  # Its own guest, VM 998. Bookmarks, with floccus syncing the browser's own
-  # bookmark tree both ways so they show up in Firefox and Chrome alike.
-  #
-  # Turning this off DESTROYS VM 998 on the next run of the hypervisor play,
-  # disk and bookmarks included — and removes its nightly backup job with it.
-  # Use --check --diff first if you want warning. See docs/links.md.
-  links: true
-
-  # Its own guest, VM 997. Firefly III — where the money went.
-  #
-  # Turning this off DESTROYS VM 997 on the next run of the hypervisor play,
-  # every transaction included, and removes its backup job with it. Use
-  # --check --diff first if you want warning. See docs/finance.md.
-  finance: true

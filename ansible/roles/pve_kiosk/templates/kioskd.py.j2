@@ -465,7 +465,7 @@ def guest_meminfo(vmid):
     hands it back the moment anything wants it. So total-minus-free counts
     reclaimable cache as consumption.
 
-    That is not a rounding error. The links guest, having just pulled four
+    That is not a rounding error. A 4 GB guest here, having just pulled four
     container images and compiled Caddy, showed 3632 MB of 3922 "used" — 93% —
     while 2522 MB of it was cache and the machine was genuinely 28% full.
     Proxmox's own UI draws the same misleading figure; that it agrees is not

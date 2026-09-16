@@ -22,12 +22,10 @@ Three things read that file, and nothing holds a second copy of it:
 | Service | Flag | Runs on | Setup |
 |---|---|---|---|
 | Kiosk dashboard | `kiosk` | the hypervisor | [kiosk.md](kiosk.md) |
+| Vaultwarden | `vault` | its own guest, VM 999 | [vault.md](vault.md) |
 
 Not a service, but it lives here: [updates.md](updates.md) — what patches
 itself, what waits for your approval, and what to do when a reboot goes wrong.
-| Vaultwarden | `vault` | its own guest, VM 999 | [vault.md](vault.md) |
-| Linkwarden | `links` | its own guest, VM 998 | [links.md](links.md) |
-| Firefly III | `finance` | its own guest, VM 997 | [finance.md](finance.md) |
 
 The hypervisor itself — `pve_repos`, `tailscale`, `pve_host` — has no switch.
 You cannot turn off the machine the rest of this repo runs on, and a flag that
@@ -47,7 +45,7 @@ secret and the doc that explains it, before it changes anything on the host.
 
 Set the flag to `false`. What that means depends on where the service lives:
 
-**A service on its own guest** (`vault`, `links`): the `pve_guests` role
+**A service on its own guest** (`vault`): the `pve_guests` role
 **destroys the VM** on the next run, disk included. Run with `--check --diff`
 first if you want to see it coming. Existing archives on `tank` outlive the
 guest, but restoring one is a manual job.

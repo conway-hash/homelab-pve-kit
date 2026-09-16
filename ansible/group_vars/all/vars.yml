@@ -24,9 +24,8 @@ headscale_server_url: https://vpn.conway-hash.com
 #
 # The resolvers Caddy uses to check that its DNS-01 challenge record has
 # propagated, before telling Let's Encrypt to validate. Shared by every service
-# that fronts itself with Caddy, so it is declared here once — vault and links
-# both had their own copy, which is the duplication this repo has already paid
-# down elsewhere.
+# that fronts itself with Caddy, so it is declared here once rather than
+# copied into each one's group_vars.
 #
 # Cloudflare's resolver specifically, and this is the whole reason the var
 # exists rather than being a default:
@@ -37,9 +36,9 @@ headscale_server_url: https://vpn.conway-hash.com
 #   * Google and Quad9 are NOT. They negative-cache the challenge name from
 #     whatever queried it before the record existed, and this zone's SOA
 #     minimum is 1800s. Caddy's propagation check gives up after ~2 minutes, so
-#     it can never outlast a 30-minute NODATA. That is not theoretical: it is
-#     exactly how the links certificate failed, with "timed out waiting for
-#     record to fully propagate" and a nil provider error — the record was
+#     it can never outlast a 30-minute NODATA. That is not theoretical: a
+#     service on this tailnet failed exactly this way, with "timed out waiting
+#     for record to fully propagate" and a nil provider error — the record was
 #     written correctly and the checker was asking two resolvers that could not
 #     see it. The vault escaped it only because nothing had happened to query
 #     its challenge name first.
