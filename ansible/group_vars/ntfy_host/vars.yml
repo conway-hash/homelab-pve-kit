@@ -33,8 +33,14 @@ ntfy_dir: /opt/ntfy
 # worth hearing about, and the one this box cannot alert on for itself.
 ntfy_acme_email: tomasbokor.dev@gmail.com
 
+# ⚠️ The `v` is part of the tag, not decoration. ntfy publishes `v2.28.0`, with
+# no unprefixed equivalent — this repo's other images (vaultwarden, caddy,
+# python) are all unprefixed, so the temptation to "tidy" it away is real and
+# the result is a deploy that fails with `not found` at docker pull, after the
+# guest has already been created and converged. That is exactly how this landed
+# the first time.
 # renovate: datasource=docker depName=binwiederhier/ntfy
-ntfy_version: "2.16.0"
+ntfy_version: "v2.28.0"
 
 # Used for both stages of the Caddy build — `caddy:<v>-builder` compiles the
 # Cloudflare DNS plugin in, `caddy:<v>` runs it. One var, so the two stages
