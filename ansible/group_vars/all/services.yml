@@ -44,12 +44,7 @@ service_enabled:
   # serving — but every alert is dropped, silently, which is the worst way for
   # a monitoring system to fail. See docs/ntfy.md.
   #
-  # ⚠️ OFF until its credentials exist. Switching it on creates the guest, and
-  # the play then fails on its own asserts rather than building something
-  # half-configured — but a guest that exists and cannot converge is still
-  # worse than one that was never created. See "Before you turn it on" in
-  # docs/ntfy.md, then flip this and push.
-  ntfy: false
+  ntfy: true
 
   # Its own guest, VM 997. Reads the hypervisor over the Proxmox API, decides
   # what needs doing, pushes it to `notify`, and serves the dashboard the
