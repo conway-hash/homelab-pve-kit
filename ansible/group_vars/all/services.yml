@@ -22,9 +22,14 @@
 service_enabled:
   # Runs ON the hypervisor. The monitor is physically wired to that box, so
   # there is no guest to create — this is purely a role toggle. All it does is
-  # point a browser at the watch dashboard, so turning it off darkens the
-  # screen and changes nothing else. See docs/screen.md.
-  screen: true
+  # point a browser at the watch dashboard. See docs/screen.md.
+  #
+  # ⚠️ OFF until `watch` is on, and deliberately in that order: this role points
+  # the screen at watch.ts.… and removes the kiosk. Enabling it first would
+  # uninstall a working dashboard and replace it with an error page. Until then
+  # the retired kiosk keeps running on the host untouched — Ansible has no undo,
+  # which is the one time that works in your favour.
+  screen: false
 
   # Its own guest, VM 998. The homelab's push notification server — where every
   # service sends its alerts, and what the ntfy app on your phone subscribes to.
@@ -38,7 +43,13 @@ service_enabled:
   # Nothing else breaks — watchd keeps collecting and the dashboard keeps
   # serving — but every alert is dropped, silently, which is the worst way for
   # a monitoring system to fail. See docs/notify.md.
-  notify: true
+  #
+  # ⚠️ OFF until its credentials exist. Switching it on creates the guest, and
+  # the play then fails on its own asserts rather than building something
+  # half-configured — but a guest that exists and cannot converge is still
+  # worse than one that was never created. See "Before you turn it on" in
+  # docs/notify.md, then flip this and push.
+  notify: false
 
   # Its own guest, VM 997. Reads the hypervisor over the Proxmox API, decides
   # what needs doing, pushes it to `notify`, and serves the dashboard the
@@ -50,7 +61,12 @@ service_enabled:
   #
   # Turning this off DESTROYS VM 997 on the next run of the hypervisor play,
   # and leaves the monitor showing an error page unless `screen` goes with it.
-  watch: true
+  #
+  # ⚠️ OFF until its credentials exist, and turn `notify` on first or the first
+  # alerts have nowhere to go. It needs its OWN Proxmox token — not the
+  # privsep-0 one that creates guests. See "Before you turn it on" in
+  # docs/watch.md.
+  watch: false
 
   # Its own guest, VM 999. Turning this off DESTROYS that VM on the next run
   # of the hypervisor play — use --check --diff first if you want warning.
