@@ -24,6 +24,7 @@ to audit, in exchange for nothing this file needs.
 """
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -40,6 +41,26 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _build_id():
+    """A short hash of the page this process is serving.
+
+    The dashboard runs unattended on a monitor nobody touches, and `cog` has no
+    reason to re-fetch anything once it has loaded. Without this a deploy
+    changes the served HTML and the glass keeps running the OLD JavaScript
+    against the NEW payload — indefinitely, and looking fine while doing it.
+    The page compares this against the value it started with and reloads itself
+    when they differ.
+    """
+    try:
+        with open(os.path.join(HERE, "index.html"), "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()[:12]
+    except OSError:
+        return "unknown"
+
+
+BUILD = _build_id()
 
 
 # ── Configuration ────────────────────────────────────────────────────
@@ -959,6 +980,7 @@ class Store:
                     "ntfy_url": NTFY_URL,
                     "ntfy_topic": NTFY_TOPIC,
                     "controls": bool(CONTROL_TOKEN),
+                    "build": BUILD,
                 },
             }
 

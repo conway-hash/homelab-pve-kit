@@ -403,7 +403,7 @@ button.pill:hover{border-color:var(--fg)}
 const $ = (id) => document.getElementById(id);
 const LS_KEY = "watch.interval";
 
-let seq = 0, timer = null, lastOk = 0, tab = "all";
+let seq = 0, timer = null, lastOk = 0, tab = "all", myBuild = null;
 const hist = [];
 const HIST_MAX = 600;
 
@@ -622,6 +622,15 @@ async function poll() {
     for (const h of (d.history || [])) {
       hist.push(h);
       if (hist.length > HIST_MAX) hist.shift();
+    }
+    // The screen is unattended and cog never re-fetches on its own, so a deploy
+    // would otherwise leave old JavaScript running against a new payload
+    // forever. The server hashes the page it is serving; if that stops matching
+    // the one this tab loaded, the code on screen is stale — reload it.
+    const build = d.meta && d.meta.build;
+    if (build) {
+      if (!myBuild) myBuild = build;
+      else if (build !== myBuild) { location.reload(); return; }
     }
     render(d);
     lastOk = Date.now();
