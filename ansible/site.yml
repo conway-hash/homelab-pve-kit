@@ -34,8 +34,11 @@
     # first run of a new service that is exactly the situation.
     - pve_guests
 
-    - role: pve_kiosk
-      when: service_enabled.kiosk | bool
+    # Points the physically-attached monitor at the watch dashboard, and
+    # removes what the retired kiosk left behind. Last, because it reads
+    # watch_domain and reaching it only makes sense once the guests exist.
+    - role: pve_screen
+      when: service_enabled.screen | bool
 
 # ── Guests ───────────────────────────────────────────────────────────
 #
@@ -82,3 +85,59 @@
     - tailscale
     - docker
     - svc_vaultwarden
+
+- name: Converge the notification server
+  hosts: notify_host
+  become: true
+
+  # Deferred on purpose, same as the vault play: fact gathering is the play's
+  # first connection, so leaving it on would have Ansible SSH into a guest that
+  # may not exist — a service switched off has no VM, because pve_guests
+  # destroyed it. The end_play below runs before anything reaches the network.
+  gather_facts: false
+
+  pre_tasks:
+    - name: Stop here if notify is switched off
+      ansible.builtin.meta: end_play
+      when: not (service_enabled.notify | bool)
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+  # Same ordering and the same reasoning as the vault play.
+  roles:
+    - common
+    - tailscale
+    - docker
+    - svc_ntfy
+
+- name: Converge the watcher
+  hosts: watch_host
+  become: true
+
+  # Deferred for the same reason as every other guest play.
+  gather_facts: false
+
+  pre_tasks:
+    - name: Stop here if watch is switched off
+      ansible.builtin.meta: end_play
+      when: not (service_enabled.watch | bool)
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+  # Listed after notify, but do NOT read that as an ordering guarantee: CI
+  # matrixes the guest plays and runs them in PARALLEL, so on a first deploy
+  # this guest may well come up before there is anything to push to. It is
+  # only a local `ansible-playbook site.yml` that runs them in file order.
+  #
+  # That is fine, and watchd is written for it: a push that cannot be delivered
+  # is logged and dropped, never fatal. The dashboard is correct either way,
+  # and the next state CHANGE re-notifies. Building an ordering dependency
+  # between two guests to save the first few minutes of one deploy would cost
+  # more than it buys.
+  roles:
+    - common
+    - tailscale
+    - docker
+    - svc_watch

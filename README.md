@@ -31,7 +31,8 @@ been touched:
 | `pve_repos` | Disables the enterprise + Ceph repos, enables `pve-no-subscription`. **First**, because out of the box the enterprise repo is on with no subscription and every `apt` call 401s until this runs. |
 | `tailscale` | Installs and joins the tailnet. Not Proxmox-specific — guests reuse it as-is. |
 | `pve_host` | `sudo` (Proxmox doesn't ship it), unattended upgrades with **no automatic reboot**, Tailscale added to the allowed origins, and `package-updates=always`. |
-| `pve_kiosk` | Drives the monitor physically attached to the box: per-core CPU and temperatures, memory, GPU, network and filesystem graphs; guests and the containers inside them; a live tailnet graph; the Proxmox task log; and the buttons that approve an upgrade or a reboot. |
+| `pve_guests` | Creates and destroys the guests, cloning each from a cloud-init template it builds once. Runs before the guest plays, because Ansible cannot configure a machine that does not exist yet. |
+| `pve_screen` | Points the monitor physically attached to the box at the `watch` dashboard — `cage` plus `cog`, launched from `tty1`. It also removes what the retired `pve_kiosk` left behind, since deleting a role stops it converging but does not uninstall it. |
 
 And on each guest, in this order:
 
@@ -49,18 +50,22 @@ Every service is optional, and every switch lives in one file:
 ```yaml
 # ansible/group_vars/all/services.yml
 service_enabled:
-  kiosk: true
+  screen: true
   vault: true
+  notify: true
+  watch: true
 ```
 
 | Service | Flag | Runs on | Docs |
 |---|---|---|---|
 | Vaultwarden | `vault` | its own guest, VM 999 | [docs/vault.md](docs/vault.md) |
-| Kiosk dashboard | `kiosk` | the hypervisor | [docs/kiosk.md](docs/kiosk.md) |
+| ntfy (push notifications) | `notify` | its own guest, VM 998 | [docs/notify.md](docs/notify.md) |
+| watch (dashboard + alerts) | `watch` | its own guest, VM 997 | [docs/watch.md](docs/watch.md) |
+| The physical monitor | `screen` | the hypervisor | [docs/screen.md](docs/screen.md) |
 
 Keeping the host patched is [docs/updates.md](docs/updates.md): security
 updates are taken automatically overnight, and kernel, Proxmox and reboot
-decisions wait for you to approve them — on the kiosk screen or over SSH.
+decisions wait for you to approve them — over SSH, or from the watch dashboard.
 
 Three things read that file and none of them holds a second copy of it:
 `roles/pve_guests` creates or destroys the guest, `ansible/site.yml` gates the
@@ -133,7 +138,9 @@ both just means two bots opening the same GitHub Actions PR. Dependabot
 docs/
 ├── README.md                 the switches, and what off actually means
 ├── vault.md                  one file per service — setup, checks, teardown
-├── kiosk.md
+├── notify.md
+├── watch.md
+├── screen.md
 └── updates.md                when to patch, when to reboot, and what breaks
 
 ansible/
@@ -144,10 +151,12 @@ ansible/
 │   │   └── vars.yml          tailnet facts (drift-checked against upstream)
 │   │                         + the guest baseline
 │   ├── pve_host/vars.yml
-│   └── vault_host/vars.yml
+│   ├── vault_host/vars.yml
+│   ├── notify_host/vars.yml
+│   └── watch_host/vars.yml
 └── roles/
     ├── pve_repos/ pve_host/ pve_guests/   the hypervisor, and the VMs it hosts
-    ├── pve_kiosk/                         a service, on the hypervisor
+    ├── pve_screen/                        a service, on the hypervisor
     ├── tailscale/ common/ docker/         any machine
     └── svc_<name>/                        one self-contained role per service
 

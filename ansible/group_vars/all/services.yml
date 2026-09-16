@@ -20,10 +20,37 @@
 # default), a bare `services` would be shadowed the moment any play gathers
 # service facts.
 service_enabled:
-  # Runs ON the hypervisor. The screen is physically wired to that box, so
-  # there is no guest to create — this is purely a role toggle.
-  # See docs/kiosk.md.
-  kiosk: true
+  # Runs ON the hypervisor. The monitor is physically wired to that box, so
+  # there is no guest to create — this is purely a role toggle. All it does is
+  # point a browser at the watch dashboard, so turning it off darkens the
+  # screen and changes nothing else. See docs/screen.md.
+  screen: true
+
+  # Its own guest, VM 998. The homelab's push notification server — where every
+  # service sends its alerts, and what the ntfy app on your phone subscribes to.
+  #
+  # Its own guest rather than a container inside whichever service wanted it
+  # first: notifications are infrastructure, and binding them to one service
+  # would mean disabling that service silently disables alerting for all the
+  # others.
+  #
+  # Turning this off DESTROYS VM 998 on the next run of the hypervisor play.
+  # Nothing else breaks — watchd keeps collecting and the dashboard keeps
+  # serving — but every alert is dropped, silently, which is the worst way for
+  # a monitoring system to fail. See docs/notify.md.
+  notify: true
+
+  # Its own guest, VM 997. Reads the hypervisor over the Proxmox API, decides
+  # what needs doing, pushes it to `notify`, and serves the dashboard the
+  # physical screen shows.
+  #
+  # Replaced the kiosk, which did the same job on the hypervisor itself and
+  # could only afford to look every 20 seconds because `pvesh` forks a Perl
+  # process per call. See docs/watch.md.
+  #
+  # Turning this off DESTROYS VM 997 on the next run of the hypervisor play,
+  # and leaves the monitor showing an error page unless `screen` goes with it.
+  watch: true
 
   # Its own guest, VM 999. Turning this off DESTROYS that VM on the next run
   # of the hypervisor play — use --check --diff first if you want warning.

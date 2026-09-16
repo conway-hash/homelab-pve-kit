@@ -1,0 +1,80 @@
+# Managed by Ansible (svc_ntfy) — edits will be overwritten.
+
+services:
+  ntfy:
+    image: binwiederhier/ntfy:{{ ntfy_version }}
+    container_name: ntfy
+    # ntfy's image has no default command that starts the server.
+    command: ["serve"]
+    # Layer 2: the container's process exited. This is the one Docker acts on —
+    # restart policies read exit codes, not healthchecks. A container that is
+    # running but wedged is handled by the self-heal timer instead.
+    restart: unless-stopped
+    env_file:
+      # format: raw — parsed literally, with NO variable interpolation.
+      # Compose interpolates $ in env_file VALUES, not just in `environment:`,
+      # and these are passwords. The vault lost an Argon2 admin token to
+      # exactly that, silently, from a file that was correct on disk.
+      - path: ./ntfy.env
+        format: raw
+    volumes:
+      - ./data:/var/lib/ntfy
+    # No `ports:`. ntfy is reachable only across this stack's private network,
+    # from Caddy. Publishing 80 here would put an unauthenticated plaintext ntfy
+    # on the guest's LAN address beside the TLS one, which is the exact bug the
+    # vault shipped with.
+    healthcheck:
+      # ntfy's own health endpoint. Answers 200 with {"healthy":true} once the
+      # server is up and its database is open, which is the honest scope of a
+      # container healthcheck — it does not prove Caddy is serving it.
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:80/v1/health | grep -q '\"healthy\":true'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+      args:
+        CADDY_VERSION: "{{ caddy_version }}"
+    container_name: ntfy-caddy
+    restart: unless-stopped
+    env_file:
+      # raw here too. This token has no $ in it today, but the failure mode is
+      # silent and the cost of consistency is one line.
+      - path: ./caddy.env
+        format: raw
+    ports:
+      # Bound to the tailnet address, NOT 0.0.0.0. A bare "443:443" publishes on
+      # every interface this guest has — including its LAN address. Docker's
+      # publish rules also sit in front of the host firewall, so this binding,
+      # not a rule, is what actually closes it.
+      - "{{ svc_ntfy_tailnet_ip.stdout | trim }}:443:443"
+      # HTTP/3. The Android app will use it where available; without the UDP
+      # mapping it falls back to TCP after a stall.
+      - "{{ svc_ntfy_tailnet_ip.stdout | trim }}:443:443/udp"
+      # Loopback as well, and load-bearing: healthcheck.sh curls
+      # --resolve <domain>:443:127.0.0.1. Drop this and the self-heal check can
+      # never connect, decides ntfy is down, and restarts a healthy stack every
+      # six minutes forever.
+      - "127.0.0.1:443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-data:/data
+      - ./caddy-config:/config
+    depends_on:
+      - ntfy
+    healthcheck:
+      # Caddy's admin API, enabled by default on localhost:2019. It proves the
+      # process is up holding a parsed config — not that the vhost serves TLS.
+      # wget is busybox's, already in the Alpine base; nothing is added.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "--timeout=3",
+             "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Long enough to cover an ACME renewal on a cold start, which blocks the
+      # config from loading until the certificate is in hand.
+      start_period: 60s

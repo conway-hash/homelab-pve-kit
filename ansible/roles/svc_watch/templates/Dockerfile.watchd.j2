@@ -1,0 +1,22 @@
+# Managed by Ansible (svc_watch) — edits will be overwritten.
+#
+# Deliberately has no pip layer. watchd is stdlib-only, so there is no
+# requirements file, no lockfile, no wheel cache and no third-party code in the
+# image beyond Python itself — which for a service holding a Proxmox token and
+# a push credential is worth more than the convenience of `requests`.
+
+ARG PYTHON_VERSION
+
+FROM python:${PYTHON_VERSION}-alpine
+
+WORKDIR /app
+COPY watchd.py index.html /app/
+
+# Nothing here writes to disk: state is in memory and the only outputs are HTTP
+# responses and pushes. So it runs unprivileged, and the filesystem can be
+# mounted read-only by compose.
+USER nobody
+
+# -u so logs reach `docker logs` as they happen rather than when a buffer
+# fills, which matters when the thing you are debugging is why it stopped.
+CMD ["python3", "-u", "watchd.py"]

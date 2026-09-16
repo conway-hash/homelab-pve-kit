@@ -1,0 +1,15 @@
+# Managed by Ansible (svc_ntfy) — edits will be overwritten.
+
+[Unit]
+Description=Check ntfy answers every {{ ntfy_selfheal_interval }}
+
+[Timer]
+# The delay before the first check is generous on purpose: on a cold boot the
+# stack is still building and starting, and a check that fires into that would
+# count healthy startup as failure.
+OnBootSec=5min
+OnUnitActiveSec={{ ntfy_selfheal_interval }}
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

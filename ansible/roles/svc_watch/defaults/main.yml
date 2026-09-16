@@ -1,0 +1,48 @@
+---
+# This file holds ONLY vars with no safe default — secrets and
+# required-but-unset values, declared as "" with an ansible.builtin.assert in
+# tasks/main.yml that refuses to deploy without them. Everything with a real
+# default (versions, paths, thresholds, the domain) lives in
+# group_vars/watch_host/vars.yml, not here.
+#
+# Set for real in group_vars/watch_host/secrets.yml (git-ignored) or written by
+# CI from the `watch` GitHub Environment immediately before the playbook runs.
+# See docs/watch.md.
+
+# Secret half of the Proxmox API token watchd reads the hypervisor with.
+#
+# ⚠️ NOT the `homelab` token pve_guests uses. That one is privsep 0 — full
+# control of every VM on the box — and a dashboard has no business holding it.
+# Mint a separate one bound to a role that can read everything and power-cycle,
+# and nothing else:
+#
+#   pveum role add Watch -privs "VM.Audit Datastore.Audit Sys.Audit Sys.Modify Sys.PowerMgmt"
+#   pveum user add watch@pve
+#   pveum acl modify / --user watch@pve --role Watch
+#   pveum user token add watch@pve watchd --privsep 0
+#
+# See docs/watch.md for what each privilege is actually for.
+svc_watch_pve_token_secret: ""
+
+# Password for the `publisher` account on the notify guest. The SAME value as
+# svc_ntfy_publisher_password over there — one account that every service
+# publishes as. It is declared in both services' secrets because neither guest
+# can read the other's, which is the one place this repo tolerates a value
+# living twice; docs/notify.md says so out loud.
+svc_watch_ntfy_password: ""
+
+# Bearer token gating the control endpoints — reboot the node, start or stop a
+# guest. Anything that reaches watchd over the tailnet can call them without
+# it, and "on the tailnet" includes every device you own plus anything that
+# ever joins.
+#
+# Leave it EMPTY to disable the controls entirely. watchd then answers 503 and
+# the dashboard hides the buttons, which is the right default for a service
+# whose read-only half is the part you actually wanted.
+#
+#   openssl rand -hex 32
+svc_watch_control_token: ""
+
+# Cloudflare API token for the ACME DNS-01 challenge. Its own, not a copy of
+# another service's — see the same note in svc_ntfy/defaults/main.yml.
+svc_watch_cloudflare_api_token: ""

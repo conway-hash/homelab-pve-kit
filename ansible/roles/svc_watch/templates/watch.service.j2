@@ -1,0 +1,24 @@
+# Managed by Ansible (svc_watch) — edits will be overwritten.
+
+[Unit]
+Description=watch stack (watchd + Caddy)
+Requires=docker.service
+After=docker.service network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory={{ watch_dir }}
+
+# `up -d --build`: both images are built from Dockerfiles here, and without
+# --build a version bump would start the previously built image and report
+# success.
+ExecStart=/usr/bin/docker compose up -d --build --remove-orphans
+ExecStop=/usr/bin/docker compose down
+
+# The Caddy build can pull a Go toolchain on a cold cache.
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

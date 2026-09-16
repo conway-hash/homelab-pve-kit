@@ -1,0 +1,42 @@
+# Managed by Ansible (svc_ntfy) — edits will be overwritten.
+
+{
+	# Where expiry warnings go. ACME registration requires an address, and an
+	# unread one means the only warning before a silent outage goes nowhere.
+	email {{ ntfy_acme_email }}
+}
+
+{{ ntfy_domain }} {
+	tls {
+		# DNS-01, not HTTP-01. HTTP-01 needs Let's Encrypt to reach port 80 on
+		# this machine from the public internet; DNS-01 proves control of the
+		# name instead, so nothing here is ever exposed.
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+
+		# Public resolvers, explicitly, for the challenge only. The plugin works
+		# out which Cloudflare zone owns a name by walking up its SOA records,
+		# and by default asks the system resolver — which on a tailnet member is
+		# MagicDNS, and MagicDNS answers SOA with NOTIMP. Zone discovery then
+		# fails with an error naming the domain rather than the resolver, which
+		# reads like a Cloudflare permissions problem and is not.
+		#
+		# NOT 1.1.1.1: this LAN is 1.1.1.0/24, so that address is a machine down
+		# the hall rather than Cloudflare's resolver.
+		resolvers {{ acme_dns_resolvers | join(' ') }}
+	}
+
+	reverse_proxy ntfy:80 {
+		# ntfy holds a subscription connection open for as long as the client
+		# stays subscribed — that is how the Android app gets instant delivery
+		# without Firebase. Caddy's default write timeout would cut it, and the
+		# app would silently fall back to reconnecting in a loop.
+		flush_interval -1
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

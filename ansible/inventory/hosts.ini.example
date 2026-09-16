@@ -37,3 +37,26 @@ vault ansible_host=1.1.1.21 ansible_user=ci-deploy
 [vault_host:vars]
 ansible_ssh_private_key_file=~/.ssh/homelab_ci_deploy
 ansible_ssh_common_args=-o StrictHostKeyChecking=accept-new -o ProxyCommand="ssh -W %h:%p -q -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new ci-deploy@pve.ts.conway-hash.com"
+
+# Group `notify_host`, machine `notify` — same split as vault_host/vault.
+[notify_host]
+# Reached by ProxyJump through the hypervisor, not by tailnet name, and
+# deliberately so: the tailnet name would work once the tailscale role has run,
+# but it would ALSO be the only way in, so a guest whose tailnet join broke
+# would be unreachable by the very playbook that could fix it.
+notify ansible_host=1.1.1.22 ansible_user=ci-deploy
+
+[notify_host:vars]
+ansible_ssh_private_key_file=~/.ssh/homelab_ci_deploy
+ansible_ssh_common_args=-o StrictHostKeyChecking=accept-new -o ProxyCommand="ssh -W %h:%p -q -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new ci-deploy@pve.ts.conway-hash.com"
+
+# Group `watch_host`, machine `watch` — same split again.
+[watch_host]
+# Same ProxyJump reasoning as above. It matters a little more here: this guest
+# reaches the hypervisor over the tailnet to do its job, so if that breaks it
+# is both the machine that cannot work and the one you need to get into.
+watch ansible_host=1.1.1.23 ansible_user=ci-deploy
+
+[watch_host:vars]
+ansible_ssh_private_key_file=~/.ssh/homelab_ci_deploy
+ansible_ssh_common_args=-o StrictHostKeyChecking=accept-new -o ProxyCommand="ssh -W %h:%p -q -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new ci-deploy@pve.ts.conway-hash.com"

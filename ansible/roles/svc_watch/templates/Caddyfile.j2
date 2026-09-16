@@ -1,0 +1,26 @@
+# Managed by Ansible (svc_watch) — edits will be overwritten.
+
+{
+	email {{ watch_acme_email }}
+}
+
+{{ watch_domain }} {
+	tls {
+		# DNS-01, not HTTP-01 — nothing here is publicly reachable and is not
+		# going to be. See the vault's Caddyfile for the full reasoning.
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+		# NOT 1.1.1.1: this LAN is 1.1.1.0/24. And not the system resolver
+		# either — MagicDNS answers SOA with NOTIMP, which breaks the plugin's
+		# zone discovery with an error that reads like a permissions problem.
+		resolvers {{ acme_dns_resolvers | join(' ') }}
+	}
+
+	reverse_proxy watchd:{{ watch_port }}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

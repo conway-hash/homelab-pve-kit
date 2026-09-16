@@ -1,0 +1,9 @@
+# Managed by Ansible (svc_watch) — edits will be overwritten.
+
+[Unit]
+Description=Check watch answers, and restart the stack if it stops
+After=watch.service
+
+[Service]
+Type=oneshot
+ExecStart={{ watch_dir }}/healthcheck.sh

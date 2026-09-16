@@ -1,0 +1,392 @@
+---
+# ntfy behind its own Caddy, both as containers on this guest.
+#
+# Caddy is here — beside the thing it fronts — and not on a shared proxy
+# machine, for the same reason the vault's is: a per-service Caddy covers one
+# name with one certificate and keeps the DNS-write credential on the one
+# machine that needs it.
+#
+# This guest exists so that notifications are not a feature of whichever
+# service happened to want them first. Every service publishes here; none of
+# them owns it.
+
+- name: Refuse to deploy without the publisher password
+  ansible.builtin.assert:
+    that: svc_ntfy_publisher_password | length > 0
+    fail_msg: >-
+      svc_ntfy_publisher_password is unset. Nothing could publish a
+      notification, so every alert this homelab produces would be silently
+      dropped. Put it in group_vars/notify_host/secrets.yml — see
+      docs/notify.md.
+
+- name: Refuse to deploy without the phone password
+  ansible.builtin.assert:
+    that: svc_ntfy_phone_password | length > 0
+    fail_msg: >-
+      svc_ntfy_phone_password is unset, so the ntfy app has no account to log
+      in as and you would never receive an alert. Put it in
+      group_vars/notify_host/secrets.yml — see docs/notify.md.
+
+- name: Refuse to deploy without the Cloudflare API token
+  ansible.builtin.assert:
+    that: svc_ntfy_cloudflare_api_token | length > 0
+    fail_msg: >-
+      svc_ntfy_cloudflare_api_token is unset, so Caddy cannot answer the ACME
+      DNS-01 challenge and will never obtain a certificate. The ntfy Android
+      app refuses a server whose certificate it cannot verify, so this is not a
+      nice-to-have. Mint one from Cloudflare's "Edit zone DNS" template,
+      restricted to the single zone — see docs/notify.md.
+
+# ── What the stack is allowed to listen on ───────────────────────────
+#
+# Docker publishes to 0.0.0.0 unless told otherwise, and this guest has a LAN
+# address as well as a tailnet one. A bare `ports: 443:443` would put the
+# notification server on the home LAN, reachable by every device on it. The
+# vault shipped exactly that bug once; binding to the tailnet address is what
+# makes the claim in docs/notify.md true. There is no firewall involved — the
+# socket simply does not exist on the LAN interface.
+
+- name: Read the guest's tailnet address
+  # The tailscale role runs before this one in site.yml, so the interface is
+  # already up and holding its address by the time this asks.
+  ansible.builtin.command: tailscale ip -4
+  register: svc_ntfy_tailnet_ip
+  changed_when: false
+  check_mode: false
+
+- name: Refuse to deploy without a tailnet address
+  # Without this the template would render an empty bind address, which Docker
+  # reads as "all interfaces" — silently restoring the exact LAN exposure this
+  # is here to remove. Failing is the safe direction.
+  ansible.builtin.assert:
+    that: svc_ntfy_tailnet_ip.stdout | trim | length > 0
+    fail_msg: >-
+      `tailscale ip -4` returned nothing, so this guest is not on the tailnet.
+      Deploying now would publish ntfy on every interface it has, including the
+      LAN. Fix the tailnet join first — see docs/notify.md.
+
+- name: Create the stack directory
+  ansible.builtin.file:
+    path: "{{ ntfy_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Create the data directories
+  ansible.builtin.file:
+    path: "{{ ntfy_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - data          # ntfy's message cache and its user database
+    - caddy-data    # issued certificates and the ACME account key
+    - caddy-config  # Caddy's own autosaved config
+
+- name: Write the Caddy build file
+  # Built rather than pulled: the official caddy image has no DNS provider
+  # modules compiled in. See the template for why a ready-made third-party
+  # image is not used instead.
+  ansible.builtin.template:
+    src: Dockerfile.caddy.j2
+    dest: "{{ ntfy_dir }}/Dockerfile.caddy"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart the ntfy stack
+
+- name: Write the Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: "{{ ntfy_dir }}/Caddyfile"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart the ntfy stack
+
+- name: Write the compose file
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ ntfy_dir }}/compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart the ntfy stack
+
+- name: Write the ntfy environment file
+  ansible.builtin.template:
+    src: ntfy.env.j2
+    dest: "{{ ntfy_dir }}/ntfy.env"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart the ntfy stack
+
+- name: Write the Caddy environment file
+  ansible.builtin.template:
+    src: caddy.env.j2
+    dest: "{{ ntfy_dir }}/caddy.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart the ntfy stack
+
+# ── Layer 2: the guest booted ────────────────────────────────────────
+
+- name: Install the stack unit
+  ansible.builtin.template:
+    src: ntfy.service.j2
+    dest: /etc/systemd/system/ntfy.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable and start the stack
+  ansible.builtin.systemd_service:
+    name: ntfy
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Flush handlers before touching accounts
+  # The account tasks below run `docker exec` against the ntfy container. If a
+  # config change is still sitting in a pending handler, they would run against
+  # the OLD container and then be restarted out from under themselves.
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for ntfy to be ready for commands
+  # `docker exec ntfy ntfy user ...` fails if the container is still starting,
+  # and on a cold boot the Caddy build above can hold the unit for minutes. The
+  # health endpoint answers only once the server is up with its database open,
+  # which is exactly the precondition the account tasks need.
+  ansible.builtin.command: >-
+    docker exec ntfy wget -q -O - http://127.0.0.1:80/v1/health
+  register: svc_ntfy_ready
+  until: svc_ntfy_ready.rc == 0 and '"healthy":true' in svc_ntfy_ready.stdout
+  retries: 30
+  delay: 5
+  changed_when: false
+
+# ── Accounts ─────────────────────────────────────────────────────────
+#
+# Two accounts with opposite halves of one permission: `publisher` may write
+# and not read, `phone` may read and not write. With NTFY_AUTH_DEFAULT_ACCESS
+# set to deny-all, anything without one of these is refused outright.
+#
+# Both are granted on `*`, which is what makes a new service free — it picks a
+# topic name and publishes, with nothing to change on this guest.
+
+- name: Pair each account with its password
+  # Declared once, here, because three tasks below loop over the same pairing —
+  # create, probe, converge. Writing the list inline on each of them would be
+  # one fact in three places, free to disagree the moment an account is added.
+  #
+  # Not in group_vars: it carries the passwords themselves.
+  ansible.builtin.set_fact:
+    svc_ntfy_accounts:
+      - name: "{{ ntfy_publisher_user }}"
+        password: "{{ svc_ntfy_publisher_password }}"
+      - name: "{{ ntfy_phone_user }}"
+        password: "{{ svc_ntfy_phone_password }}"
+  no_log: true
+
+- name: Read the existing ntfy accounts
+  # Read before writing, so the tasks below can tell "I changed something" from
+  # "I ran". Creating a user that already exists is an error, so this is also
+  # what stops the role working exactly once and failing on every run after.
+  ansible.builtin.command: docker exec ntfy ntfy user list
+  register: svc_ntfy_users
+  changed_when: false
+  check_mode: false
+
+- name: Create the accounts
+  # NTFY_PASSWORD rather than answering a prompt: `ntfy user add` asks
+  # interactively when it is unset, and an interactive prompt inside
+  # `docker exec` from Ansible does not fail — it BLOCKS, holding the play open
+  # until the job times out with nothing useful in the output.
+  #
+  # `timeout` is the belt to that braces. If a future ntfy ever stops honouring
+  # the variable, this fails in 30 seconds naming the task instead of hanging
+  # the deploy.
+  ansible.builtin.command:
+    argv:
+      - timeout
+      - "30"
+      - docker
+      - exec
+      - --env=NTFY_PASSWORD={{ item.password }}
+      - ntfy
+      - ntfy
+      - user
+      - add
+      - --role=user
+      - "{{ item.name }}"
+  loop: "{{ svc_ntfy_accounts }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  when: "'user ' + item.name not in svc_ntfy_users.stdout"
+  changed_when: true
+
+# ⚠️ The task above is create-only. On its own that means the passwords in
+# secrets.yml are applied ONCE, at creation, and silently ignored forever
+# after: you could rotate a password in the GitHub Environment, watch the play
+# report `ok`, and have changed nothing. A create-only task in a converging
+# playbook is a bug — this is the other half of it, the same way pve_host
+# converges backup jobs it did not just create.
+#
+# A password cannot be read back and compared, so the check is a real login
+# instead. That is the better test anyway: it proves the credential this repo
+# believes in actually works, rather than that two hashes match.
+- name: Check whether each account's password still works
+  # curl from the guest, through the loopback publish, NOT `docker exec wget`.
+  # ntfy's image is Alpine, so its wget is busybox's, and busybox wget has no
+  # --http-user/--http-password at all — the probe would fail for every
+  # account and rewrite both passwords on every single run.
+  #
+  # Going through Caddy also means this tests the path a client actually uses.
+  ansible.builtin.command:
+    argv:
+      - curl
+      - -fsS
+      - --max-time
+      - "10"
+      - -o
+      - /dev/null
+      - -u
+      - "{{ item.name }}:{{ item.password }}"
+      - --resolve
+      - "{{ ntfy_domain }}:443:127.0.0.1"
+      - "https://{{ ntfy_domain }}/v1/account"
+  register: svc_ntfy_auth_probe
+  loop: "{{ svc_ntfy_accounts }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  # A wrong password is a 401, which curl -f turns into a non-zero exit. That
+  # is the answer this task collects, not a failure of the play.
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: Converge the account passwords
+  ansible.builtin.command:
+    argv:
+      - timeout
+      - "30"
+      - docker
+      - exec
+      - --env=NTFY_PASSWORD={{ item.item.password }}
+      - ntfy
+      - ntfy
+      - user
+      - change-pass
+      - "{{ item.item.name }}"
+  loop: "{{ svc_ntfy_auth_probe.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  no_log: true
+  # Only where the login above actually failed. A password that already works
+  # is left alone, so this is green on a routine run and yellow exactly when it
+  # rotated something.
+  when: item.rc is defined and item.rc != 0
+  changed_when: true
+
+- name: Read the existing topic grants
+  ansible.builtin.command: docker exec ntfy ntfy access
+  register: svc_ntfy_access
+  changed_when: false
+  check_mode: false
+
+- name: Grant each account its half of the permission
+  # `ntfy access` is idempotent — setting a grant that already exists is a
+  # no-op — so this runs unconditionally and the read above is used only to
+  # decide what to REPORT. Getting that the other way round would trade a
+  # cosmetic annoyance for a grant that silently never converges.
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - ntfy
+      - ntfy
+      - access
+      - "{{ item.name }}"
+      - "*"
+      - "{{ item.permission }}"
+  loop:
+    - name: "{{ ntfy_publisher_user }}"
+      permission: write-only
+    - name: "{{ ntfy_phone_user }}"
+      permission: read-only
+  loop_control:
+    label: "{{ item.name }} → {{ item.permission }} on *"
+  # `ntfy access` prints each user followed by its grants:
+  #
+  #   user publisher (role: user, tier: none)
+  #   - write-only       *
+  #
+  # so a grant is already in place when the permission and the wildcard appear
+  # on one line somewhere after that user's header.
+  changed_when: >-
+    svc_ntfy_access.stdout is not search('user ' + item.name)
+    or svc_ntfy_access.stdout is not search(item.permission + r'\s+\*')
+
+# ── Layer 3: it is running but not answering ─────────────────────────
+#
+# Docker's restart policy fires when a container's process EXITS. It does not
+# read healthcheck results — an unhealthy container is restarted by nothing. So
+# a wedged ntfy, or a Caddy sitting on an expired certificate, would stay "up"
+# indefinitely with no client able to reach it.
+
+- name: Install the self-heal script
+  ansible.builtin.template:
+    src: healthcheck.sh.j2
+    dest: "{{ ntfy_dir }}/healthcheck.sh"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install the self-heal unit and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - ntfy-healthcheck.service
+    - ntfy-healthcheck.timer
+  notify: Reload systemd
+
+- name: Flush handlers before verifying
+  # The check below asserts on the running stack. Without this it would run
+  # against whatever was up BEFORE this play's config changes were applied, and
+  # pass or fail for reasons that have nothing to do with what just changed.
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the self-heal timer
+  ansible.builtin.systemd_service:
+    name: ntfy-healthcheck.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# curl rather than the uri module, for the reason documented at length in
+# svc_vaultwarden: uri resolves through the guest's own resolver, which failed
+# sixty times in CI against a healthy stack mid-deploy. curl --resolve asks
+# "is this serving" without also asking "has DNS converged", while still
+# pinning SNI so the certificate is genuinely verified.
+- name: Wait for ntfy to answer over HTTPS  # noqa: command-instead-of-module
+  ansible.builtin.command: >-
+    curl -fsS --max-time 15
+    --resolve {{ ntfy_domain }}:443:127.0.0.1
+    https://{{ ntfy_domain }}/v1/health
+  register: svc_ntfy_alive
+  until: svc_ntfy_alive is success
+  retries: 60
+  delay: 10
+  changed_when: false

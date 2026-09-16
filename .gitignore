@@ -6,6 +6,12 @@ ansible/*.retry
 # Rendered on a host, never meant to live in git even locally
 **/.env
 
+# Python bytecode. watchd.py is a plain file copied to the guest, so anything
+# compiled beside it is local scratch — and would otherwise ride along in the
+# role's files/ directory.
+__pycache__/
+*.pyc
+
 # OS / editor cruft
 .DS_Store
 *.swp

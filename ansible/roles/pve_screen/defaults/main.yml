@@ -1,0 +1,10 @@
+---
+# What the physically-attached monitor shows.
+#
+# This is all that survives of pve_kiosk. That role collected metrics, served a
+# web page AND drove the screen; the first two moved to the watch guest, and
+# what is left is genuinely just "point a browser at a URL".
+#
+# Which URL is not declared here — it is watch_domain, and it belongs to the
+# watch service. This role reads it, so that the screen and the service cannot
+# disagree about where the dashboard is.

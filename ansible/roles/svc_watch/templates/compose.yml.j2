@@ -1,0 +1,78 @@
+# Managed by Ansible (svc_watch) — edits will be overwritten.
+
+services:
+  watchd:
+    build:
+      context: .
+      dockerfile: Dockerfile.watchd
+      args:
+        PYTHON_VERSION: "{{ watch_python_version }}"
+    container_name: watchd
+    restart: unless-stopped
+    env_file:
+      # format: raw — parsed literally, with NO variable interpolation.
+      # Compose interpolates $ in env_file VALUES, not just in `environment:`,
+      # and this file holds a Proxmox token and a password. The vault lost an
+      # Argon2 admin token to exactly that, silently.
+      - path: ./watch.env
+        format: raw
+    # Nothing in watchd writes to disk — state is in memory, output is HTTP and
+    # pushes — so the filesystem can be read-only. A container that cannot be
+    # written to is a container an exploit cannot persist in.
+    read_only: true
+    # tmpfs for Python's own scratch (bytecode it may try to write). Small and
+    # not executable.
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # No `ports:`. watchd is reachable only across this stack's private network,
+    # from Caddy. Publishing it here would put an unauthenticated plaintext
+    # dashboard — with working control endpoints — on the guest's LAN address.
+    healthcheck:
+      # /healthz deliberately does NOT depend on Proxmox being reachable. This
+      # answers "is watchd serving", which is what a restart could fix; the
+      # hypervisor being unreachable is an ALERT, not a reason to restart this
+      # container in a loop.
+      test: ["CMD", "python3", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:{{ watch_port }}/healthz', timeout=5).status == 200 else 1)"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+      args:
+        CADDY_VERSION: "{{ caddy_version }}"
+    container_name: watch-caddy
+    restart: unless-stopped
+    env_file:
+      - path: ./caddy.env
+        format: raw
+    ports:
+      # Bound to the tailnet address, NOT 0.0.0.0. A bare "443:443" publishes on
+      # every interface this guest has — including its LAN address — and behind
+      # this one there are endpoints that reboot machines.
+      - "{{ svc_watch_tailnet_ip.stdout | trim }}:443:443"
+      - "{{ svc_watch_tailnet_ip.stdout | trim }}:443:443/udp"
+      # Loopback as well, and load-bearing: healthcheck.sh curls
+      # --resolve <domain>:443:127.0.0.1.
+      - "127.0.0.1:443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-data:/data
+      - ./caddy-config:/config
+    depends_on:
+      - watchd
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "--timeout=3",
+             "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s

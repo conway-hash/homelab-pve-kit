@@ -1,0 +1,38 @@
+#!/bin/sh
+# Managed by Ansible (svc_watch) — edits will be overwritten.
+#
+# Layer 3. Docker restarts a container whose process EXITS; it does nothing
+# about one that is running and not answering.
+#
+# ⚠️ This checks /healthz, which reports whether watchd is SERVING — not
+# whether the hypervisor is answering. That distinction is the whole design: a
+# Proxmox API that has gone away is the single most important thing this
+# service has to tell you about, and restarting the messenger every six minutes
+# would destroy the evidence and the alert with it.
+
+set -eu
+
+STATE=/run/watch-healthcheck.failures
+THRESHOLD={{ watch_selfheal_failures }}
+
+if curl -fsS --max-time 10 \
+     --resolve "{{ watch_domain }}:443:127.0.0.1" \
+     "https://{{ watch_domain }}/healthz" >/dev/null 2>&1; then
+  rm -f "$STATE"
+  exit 0
+fi
+
+FAILURES=$(( $(cat "$STATE" 2>/dev/null || echo 0) + 1 ))
+echo "$FAILURES" > "$STATE"
+
+if [ "$FAILURES" -lt "$THRESHOLD" ]; then
+  echo "watch did not answer ($FAILURES/$THRESHOLD) — not restarting yet"
+  exit 0
+fi
+
+echo "watch did not answer $FAILURES times in a row — restarting the stack"
+rm -f "$STATE"
+
+# --no-block: this script runs from a unit, and restarting a target that would
+# wait on this same script's unit deadlocks systemd.
+systemctl restart --no-block watch.service

@@ -1,0 +1,146 @@
+---
+# The watch guest — the homelab's analyser, dashboard and alert source.
+#
+# Replaces pve_kiosk, which ran on the hypervisor because a monitor is
+# physically wired to that box. Once the screen stopped being the point, so did
+# running there: the collection is now HTTP against the Proxmox API, the
+# hypervisor is back to holding no application code, and the half of the kiosk
+# that existed only to feed a 1-second graph is gone.
+#
+# The physical screen still works. `pve_screen` points a browser at this
+# service's URL — see that role, and the caveat in docs/watch.md about the
+# monitor now depending on this guest.
+
+# watch_domain is NOT declared here. The hypervisor's `pve_screen` role points
+# the physical monitor at it, and a group cannot read another group's vars, so
+# it lives in group_vars/all/vars.yml with the other facts more than one
+# machine needs.
+
+watch_dir: /opt/watch
+
+# <-- change this
+#
+# Where Let's Encrypt sends expiry warnings. Caddy renews unattended, so this
+# only matters when renewal has been failing — and this service alerts on
+# exactly that for every OTHER host, which is precisely why its own needs a
+# working address behind it.
+watch_acme_email: tomasbokor.dev@gmail.com
+
+# renovate: datasource=docker depName=python
+watch_python_version: "3.13"
+
+# Used for both stages of the Caddy build — `caddy:<v>-builder` compiles the
+# Cloudflare DNS plugin in, `caddy:<v>` runs it. One var, so the two stages
+# cannot end up a version apart.
+#
+# The `renovate:` line has to sit IMMEDIATELY above the var, with no comment
+# between — anything in the gap makes Renovate stop tracking it silently.
+# renovate: datasource=docker depName=caddy
+caddy_version: "2.11.4"
+
+# The port watchd listens on inside its container. Never published to the host;
+# Caddy is the only thing that connects to it.
+watch_port: 8080
+
+# ── Reaching the hypervisor ──────────────────────────────────────────
+
+# By tailnet name, not by LAN address. This guest reaches the host the same way
+# any other client would, so a broken tailnet surfaces as a visible alert
+# rather than as a dashboard that keeps working while nothing else can.
+watch_pve_host: "pve.{{ tailnet_base_domain }}"
+
+# The token's PUBLIC half. The secret is in secrets.yml with an assert in the
+# role.
+#
+# ⚠️ A DIFFERENT token from the `homelab` one in group_vars/pve_host/vars.yml.
+# That one is privsep 0 — full control of every guest on the box — because it
+# creates and destroys VMs. A dashboard needs to read everything and to
+# power-cycle, and nothing else. docs/watch.md has the `pveum` commands that
+# create this one.
+watch_pve_token_id: "watch@pve!watchd"
+
+# ── Where alerts go ──────────────────────────────────────────────────
+
+# The topic on the notify guest. One topic per source, so a noisy service can
+# be muted in the ntfy app without muting everything — which is the reason
+# ntfy is shared rather than duplicated per service.
+watch_ntfy_topic: watch
+
+# ── Sampling ─────────────────────────────────────────────────────────
+#
+# Demand-driven. The kiosk sampled every second forever, whether or not anyone
+# was in the room, and burned roughly half a core doing it. Here the fast rate
+# applies only while a browser is actually polling; the rest of the time — which
+# is nearly all of it — the box idles.
+
+# What it costs when nobody is looking. Also the slowest the picker offers.
+watch_idle_seconds: 60
+
+# How long after a client's last poll the service keeps sampling at the client's
+# rate. Comfortably longer than the slowest pick, so a 60s poller is not treated
+# as having left between requests.
+watch_active_grace_seconds: 90
+
+# The floor the picker can ask for. One second is affordable now only because
+# the API is HTTP rather than a `pvesh` fork per call.
+watch_min_seconds: 1
+
+# Ring buffer depth, per series, in memory. At 1s that is fifteen minutes of
+# history; nothing is written to disk, so a restart starts the graphs over.
+watch_history_points: 900
+
+# ── Thresholds ───────────────────────────────────────────────────────
+
+# ⚠️ These MUST track the backup schedule in group_vars/pve_host/vars.yml. They
+# were 36h/72h while backups ran nightly; on the current weekly job every guest
+# would sit permanently red, which is an alarm that means nothing and trains you
+# to ignore the one that matters.
+#
+# Weekly on Saturday means a healthy archive is 0-7 days old. 8 days means the
+# job missed its slot; 15 means it has missed two in a row.
+watch_backup_warn_hours: 192   # 8 days
+watch_backup_bad_hours: 360    # 15 days
+
+# pve-root filling is the failure that takes Proxmox itself down, and this repo
+# has already been close once — backups were writing uncompressed to `local`,
+# which is on root, with ~42G free. 80/90 leaves room to act.
+watch_disk_warn_pct: 80
+watch_disk_bad_pct: 90
+
+# Caddy renews at ~30 days out, unattended. This is NOT a calendar reminder —
+# it is "renewal should have happened by now and did not", which is the failure
+# that actually takes a service down. A renewal failure on this very setup is
+# documented in group_vars/all/vars.yml: the DNS-01 propagation check timing
+# out against resolvers that could not see the record.
+watch_cert_warn_days: 21
+watch_cert_bad_days: 7
+
+# The names checked with a TLS handshake. Built from the service switches, so a
+# service that is switched off is never alerted on for having no certificate —
+# and adding a service adds its name here automatically.
+#
+# `select` over the enabled flags rather than a hand-kept list: a second list
+# would be a second place for one fact to live, and it would be wrong the first
+# time a service was toggled.
+watch_tls_hosts: >-
+  {{
+    ([watch_domain] if service_enabled.watch | default(false) else [])
+    + (['vault.' ~ tailnet_base_domain] if service_enabled.vault | default(false) else [])
+    + ([ntfy_domain] if service_enabled.notify | default(false) else [])
+  }}
+
+# Guests that are expected to be off, by name or vmid. Without this, one you
+# deliberately stopped alerts forever and the only way to silence it is to start
+# it again. The cloud-init template is filtered out in watchd itself — it is a
+# template, not a guest.
+watch_ignore_guests: []
+
+# ── Self-heal ────────────────────────────────────────────────────────
+#
+# Same three-layer shape as the vault. The check hits /healthz, which reports
+# whether watchd is SERVING — deliberately not whether Proxmox is answering.
+# An unreachable hypervisor is the most important thing this service has to
+# report; restarting the messenger every six minutes would destroy the alert
+# along with the evidence.
+watch_selfheal_interval: "6min"
+watch_selfheal_failures: 3

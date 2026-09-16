@@ -1,0 +1,86 @@
+---
+# The notify guest — the homelab's push notification server, and nothing else.
+#
+# Named `notify` for what it DOES, running `svc_ntfy` for what it IS — the same
+# split as vault/svc_vaultwarden. The service name is the one that appears in
+# services.yml, the inventory, the GitHub Environment and the hostname your
+# phone subscribes to; the role name is the product. If ntfy is ever swapped
+# for Gotify, the service keeps its name and nothing your phone points at moves.
+#
+# Its own guest rather than a container inside whichever service happened to
+# need it first. Notifications are infrastructure: every service publishes to
+# them, so binding their availability to one service's guest would mean
+# disabling that service silently disables alerting for all the others. The
+# same reasoning that keeps the tailnet out of any single service's stack.
+#
+# Small on purpose — see the sizing note in group_vars/pve_host/vars.yml.
+
+# ntfy_domain is NOT declared here. Every service that publishes needs it, and
+# a group cannot read another group's vars, so it lives in
+# group_vars/all/vars.yml with the other golden-base facts. The same goes for
+# ntfy_publisher_user.
+
+ntfy_dir: /opt/ntfy
+
+# <-- change this
+#
+# Where Let's Encrypt sends expiry warnings. Caddy renews unattended, so this
+# only ever matters when renewal has been failing — which is the failure mode
+# worth hearing about, and the one this box cannot alert on for itself.
+ntfy_acme_email: tomasbokor.dev@gmail.com
+
+# renovate: datasource=docker depName=binwiederhier/ntfy
+ntfy_version: "2.16.0"
+
+# Used for both stages of the Caddy build — `caddy:<v>-builder` compiles the
+# Cloudflare DNS plugin in, `caddy:<v>` runs it. One var, so the two stages
+# cannot end up a version apart.
+#
+# The `renovate:` line has to sit IMMEDIATELY above the var, with no comment
+# between. Renovate's pattern matches the two as adjacent lines, and anything
+# in the gap makes it stop tracking silently — no error, just a dependency
+# that quietly never updates again.
+# renovate: datasource=docker depName=caddy
+caddy_version: "2.11.4"
+
+# ── Accounts ─────────────────────────────────────────────────────────
+#
+# Two, with opposite halves of the same permission. Every service publishes as
+# `publisher` (write, no read) and the phone subscribes as `phone` (read, no
+# write). Splitting them means the credential living on a device you carry
+# cannot forge an alert, and a service that gets compromised cannot read back
+# what every other service has been sending.
+#
+# Both are granted their permission on `*` rather than on a list of topics.
+# That is what makes a new service free: it picks a topic name and publishes,
+# with nothing to change here and nothing to redeploy on this guest.
+#
+# ntfy_publisher_user is in group_vars/all/vars.yml — the services that publish
+# need to know it too. Only the phone's account is this guest's own business.
+ntfy_phone_user: phone
+
+# ── Retention ────────────────────────────────────────────────────────
+#
+# How long a message stays readable after it is sent. This is a buffer for a
+# phone that was off or out of tailnet range, not an archive — the dashboard is
+# where you go to see what is wrong NOW. Long enough to cover a weekend away.
+ntfy_message_cache_duration: "72h"
+
+# Attachments are not used by anything here and the setting exists only to say
+# so deliberately: without it ntfy accepts uploads into its cache directory,
+# which is disk this guest has no reason to spend.
+ntfy_attachment_total_size_limit: "0"
+
+# ── Self-heal ────────────────────────────────────────────────────────
+#
+# Same three-layer shape as the vault: Docker restarts a process that EXITS,
+# and this covers the case it cannot see — a container that is up and not
+# answering.
+#
+# ⚠️ Worth stating plainly: this guest is the thing that tells you other things
+# are broken, so nothing tells you when IT is broken. The watch service checks
+# ntfy's own HTTPS endpoint and will say so on the dashboard, but it cannot
+# push that particular alert anywhere. That is not solvable from inside the
+# homelab — see "The blind spot" in docs/ntfy.md.
+ntfy_selfheal_interval: "6min"
+ntfy_selfheal_failures: 3

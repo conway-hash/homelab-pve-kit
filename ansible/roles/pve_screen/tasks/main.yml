@@ -1,0 +1,105 @@
+---
+# The monitor physically wired to the hypervisor, showing the watch dashboard.
+#
+# This is the surviving third of pve_kiosk. That role sampled the box, served a
+# web page and drove the screen; the first two are the watch guest's job now,
+# and driving a screen turns out to be one package list and one line in a login
+# profile.
+#
+# ⚠️ The screen now depends on a DIFFERENT machine. The kiosk pointed at
+# 127.0.0.1, so the display worked whenever the host did. This points across
+# the tailnet at the watch guest, which means a wedged guest leaves a monitor
+# showing an error page — mildly ironic for a monitor. The `|| btop` fallback
+# below only catches cog failing to LAUNCH, not a bad HTTP response, and there
+# is no honest way to make a browser fall back on content. Accepted knowingly:
+# the alternative is keeping a second copy of the collection logic on the host
+# purely so the glass stays lit.
+
+- name: Install the screen stack
+  # cage is a single-purpose Wayland compositor: it runs exactly one fullscreen
+  # client, with no desktop, panel, or launcher.
+  #
+  # cog, not chromium. Debian's chromium pulls a desktop's worth of
+  # dependencies onto what is meant to be a hypervisor — 174 packages with
+  # recommends, and even with them off it still drags cups-common,
+  # system-config-printer and upower. cog is WebKit built for exactly this job
+  # and adds no daemons at all.
+  #
+  # install_recommends: false matters here; chromium's numbers above were what
+  # made this worth measuring rather than assuming.
+  ansible.builtin.apt:
+    name:
+      - cage
+      - cog
+      - fonts-dejavu-core
+    state: present
+    install_recommends: false
+
+- name: Point tty1 at the watch dashboard
+  # tty1 already autologins root and runs btop from .bash_profile; this
+  # replaces what that line launches, keeping the same mechanism.
+  #
+  # Deliberately NOT `exec cage`: if cage or cog fails to start, the shell
+  # falls through to btop and the monitor still shows something useful instead
+  # of a bare prompt or a black screen.
+  #
+  # --enable-dev-tools is not set: there is a keyboard on this box, and a
+  # devtools window would replace the dashboard in cage's single slot.
+  ansible.builtin.blockinfile:
+    path: /root/.bash_profile
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+    # A different marker from pve_kiosk's, so this block is added rather than
+    # silently editing that one — and so the removal task below can tell them
+    # apart.
+    marker: "# {mark} ANSIBLE MANAGED — pve_screen"
+    block: |
+      if [ "$(tty)" = "/dev/tty1" ]; then
+          cage -- cog "https://{{ watch_domain }}/" || btop
+      fi
+  notify: Restart the screen session
+
+# ── Retiring the kiosk ───────────────────────────────────────────────
+#
+# Ansible has no undo: deleting the pve_kiosk role stops it being CONVERGED,
+# it does not remove what a previous run installed. Everything below is that
+# removal, written once, and it is why turning a service off and deleting its
+# role are two different events in this repo — see docs/README.md.
+#
+# These are all `state: absent` and safe on a box that never ran the kiosk.
+
+- name: Check whether root has a login profile at all
+  ansible.builtin.stat:
+    path: /root/.bash_profile
+  register: pve_screen_profile
+
+- name: Remove the kiosk's launch stanza from .bash_profile
+  ansible.builtin.blockinfile:
+    path: /root/.bash_profile
+    marker: "# {mark} ANSIBLE MANAGED — pve_kiosk"
+    state: absent
+  # Only if the file exists at all; blockinfile would otherwise create an empty
+  # one on a machine that never had it.
+  when: pve_screen_profile.stat.exists | default(false)
+
+- name: Stop and disable the kiosk daemon
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - kiosk.service
+  # A unit that was never installed is not an error here — this task exists to
+  # clean up boxes that DID run the kiosk, and must be a no-op everywhere else.
+  failed_when: false
+
+- name: Remove the kiosk's unit and directory
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/kiosk.service
+    - /opt/kiosk
+  notify: Reload systemd after removing the kiosk

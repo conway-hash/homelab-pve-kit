@@ -1,0 +1,231 @@
+---
+# watchd behind its own Caddy, both as containers on this guest.
+#
+# This is the service that replaced pve_kiosk. The kiosk ran on the hypervisor
+# and shelled out to `pvesh`, which is a Perl CLI that stands the whole API
+# stack up per call — ~0.7s of CPU each, which is why it could only look at
+# guests every 20s. Reading the same API over HTTP from here costs
+# milliseconds, so the sampling rate became a product decision instead of a
+# budget one. See docs/watch.md.
+
+- name: Refuse to deploy without the Proxmox token
+  ansible.builtin.assert:
+    that: svc_watch_pve_token_secret | length > 0
+    fail_msg: >-
+      svc_watch_pve_token_secret is unset, so watchd cannot read the hypervisor
+      and every card on the dashboard would be empty. Mint a token for a
+      read-plus-power-cycle role — NOT the privsep-0 `homelab` token pve_guests
+      uses — and put it in group_vars/watch_host/secrets.yml. The exact
+      `pveum` invocations are in docs/watch.md.
+
+- name: Refuse to deploy without the ntfy publisher password
+  ansible.builtin.assert:
+    that: svc_watch_ntfy_password | length > 0
+    fail_msg: >-
+      svc_watch_ntfy_password is unset, so watchd could collect everything and
+      then have no way to tell you about it — the alerts would exist only on a
+      page you are not looking at. It is the same value as
+      svc_ntfy_publisher_password on the notify guest; see docs/notify.md.
+
+- name: Refuse to deploy without the Cloudflare API token
+  ansible.builtin.assert:
+    that: svc_watch_cloudflare_api_token | length > 0
+    fail_msg: >-
+      svc_watch_cloudflare_api_token is unset, so Caddy cannot answer the ACME
+      DNS-01 challenge and will never obtain a certificate. Mint one from
+      Cloudflare's "Edit zone DNS" template, restricted to the single zone —
+      see docs/watch.md.
+
+# ── What the stack is allowed to listen on ───────────────────────────
+#
+# Docker publishes to 0.0.0.0 unless told otherwise, and this guest has a LAN
+# address as well as a tailnet one. That matters more here than anywhere else
+# in this repo: behind this port are endpoints that reboot the hypervisor.
+
+- name: Read the guest's tailnet address
+  ansible.builtin.command: tailscale ip -4
+  register: svc_watch_tailnet_ip
+  changed_when: false
+  check_mode: false
+
+- name: Refuse to deploy without a tailnet address
+  # Without this the template renders an empty bind address, which Docker reads
+  # as "all interfaces" — publishing the control endpoints to the home LAN.
+  ansible.builtin.assert:
+    that: svc_watch_tailnet_ip.stdout | trim | length > 0
+    fail_msg: >-
+      `tailscale ip -4` returned nothing, so this guest is not on the tailnet.
+      Deploying now would publish the dashboard — and its reboot controls — on
+      every interface it has, including the LAN. Fix the tailnet join first.
+
+- name: Create the stack directory
+  ansible.builtin.file:
+    path: "{{ watch_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Create the data directories
+  ansible.builtin.file:
+    path: "{{ watch_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - caddy-data    # issued certificates and the ACME account key
+    - caddy-config  # Caddy's own autosaved config
+
+# watchd.py and index.html are `files/`, not templates, and deliberately so:
+# every value they need arrives through the environment. That keeps the Python
+# and the JavaScript diffable as the languages they are, with no Jinja
+# delimiters to collide with braces in either.
+- name: Install the daemon and the dashboard
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ watch_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - watchd.py
+    - index.html
+  notify: Restart the watch stack
+
+- name: Write the build files
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ watch_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0640"
+  loop:
+    - Dockerfile.watchd
+    - Dockerfile.caddy
+    - Caddyfile
+    - compose.yml
+  notify: Restart the watch stack
+
+- name: Write the watchd environment file
+  ansible.builtin.template:
+    src: watch.env.j2
+    dest: "{{ watch_dir }}/watch.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart the watch stack
+
+- name: Write the Caddy environment file
+  ansible.builtin.template:
+    src: caddy.env.j2
+    dest: "{{ watch_dir }}/caddy.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart the watch stack
+
+# ── Layer 2: the guest booted ────────────────────────────────────────
+
+- name: Install the stack unit
+  ansible.builtin.template:
+    src: watch.service.j2
+    dest: /etc/systemd/system/watch.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable and start the stack
+  ansible.builtin.systemd_service:
+    name: watch
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# ── Layer 3: it is running but not answering ─────────────────────────
+
+- name: Install the self-heal script
+  ansible.builtin.template:
+    src: healthcheck.sh.j2
+    dest: "{{ watch_dir }}/healthcheck.sh"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install the self-heal unit and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - watch-healthcheck.service
+    - watch-healthcheck.timer
+  notify: Reload systemd
+
+- name: Flush handlers before verifying
+  # The checks below assert on the running stack. Without this they would run
+  # against whatever was up BEFORE this play's config changes were applied.
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the self-heal timer
+  ansible.builtin.systemd_service:
+    name: watch-healthcheck.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# curl rather than the uri module, for the reason documented at length in
+# svc_vaultwarden: uri resolves through the guest's own resolver, which failed
+# sixty times in CI against a healthy stack mid-deploy. curl --resolve asks
+# "is this serving" without also asking "has DNS converged", while still
+# pinning SNI so the certificate is genuinely verified.
+- name: Wait for watch to answer over HTTPS  # noqa: command-instead-of-module
+  ansible.builtin.command: >-
+    curl -fsS --max-time 15
+    --resolve {{ watch_domain }}:443:127.0.0.1
+    https://{{ watch_domain }}/healthz
+  register: svc_watch_alive
+  until: svc_watch_alive is success
+  retries: 60
+  delay: 10
+  changed_when: false
+
+- name: Check that watchd can actually read the hypervisor  # noqa: command-instead-of-module
+  # /healthz on purpose does NOT depend on Proxmox, so the check above passes
+  # against a watchd that is serving and blind. This is the one that proves the
+  # token works — a wrong or under-privileged token is the single most likely
+  # thing to be wrong on a first deploy, and without this it would show up as a
+  # dashboard full of zeroes that nobody was looking at anyway.
+  ansible.builtin.command: >-
+    curl -fsS --max-time 20
+    --resolve {{ watch_domain }}:443:127.0.0.1
+    https://{{ watch_domain }}/api/state
+  register: svc_watch_state
+  until: >-
+    svc_watch_state is success
+    and (svc_watch_state.stdout | from_json).latest.host is defined
+    and not (svc_watch_state.stdout | from_json).latest.errors
+  retries: 12
+  delay: 10
+  changed_when: false
+  failed_when: false
+
+- name: Report what watchd could not read
+  # Deliberately a warning rather than a failure. A token missing one privilege
+  # leaves the rest of the service genuinely useful, and failing the whole
+  # deploy over it would take the working half down with it. The smoke test in
+  # tests/watch.sh is where this becomes a hard failure, because by then it is
+  # no longer a first-run problem.
+  ansible.builtin.debug:
+    msg: >-
+      ⚠️ watchd is serving but could not read everything from Proxmox:
+      {{ (svc_watch_state.stdout | from_json).latest.errors | default(['(no response)']) | join('; ') }}
+      — check the token's role, see docs/watch.md.
+  when: >-
+    svc_watch_state is not success
+    or (svc_watch_state.stdout | from_json).latest.errors | default([]) | length > 0

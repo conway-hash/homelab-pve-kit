@@ -67,3 +67,39 @@ guest_watchdog_timeout: 60
 # How often the daemon pets it. Well under the timeout, so ordinary scheduling
 # jitter never looks like a hang.
 guest_watchdog_interval: 15
+
+# ── The hypervisor's node name ───────────────────────────────────────
+#
+# What `pvesh` and the API call this node — not necessarily the same string as
+# its tailnet hostname, though here they both happen to be "pve".
+#
+# Here rather than in group_vars/pve_host because it is no longer only the
+# hypervisor's business: the watch guest addresses the node by this name over
+# the API, and a group cannot read another group's vars. One fact, one
+# declaration, visible to both.
+pve_node: pve
+
+# ── Notifications ────────────────────────────────────────────────────
+#
+# Where anything in this homelab pushes an alert. Golden-base because it is
+# true for every machine: any service may need to say something, and they must
+# all say it to the same place or the phone ends up with two subscriptions.
+#
+# ⚠️ The hostname is deliberately independent of the guest that happens to run
+# ntfy today. The phone subscribes to THIS name, so moving the service later —
+# to another guest, or into a stack — costs nothing on the client side. Do not
+# fold it under a service's own name.
+ntfy_domain: "notify.{{ tailnet_base_domain }}"
+
+# The account every service publishes as. Write-only: a compromised publisher
+# can make your phone buzz, it cannot read back what anything else has sent.
+# Its password is a secret, declared per-service; this is just the name.
+ntfy_publisher_user: publisher
+
+# ── The dashboard ────────────────────────────────────────────────────
+#
+# Where the watch service serves from. Golden-base for the same reason as the
+# two above: it is needed by more than one group. The watch guest serves it,
+# and the hypervisor's `pve_screen` role points the physically-attached monitor
+# at it — two different machines that must not disagree about the address.
+watch_domain: "watch.{{ tailnet_base_domain }}"

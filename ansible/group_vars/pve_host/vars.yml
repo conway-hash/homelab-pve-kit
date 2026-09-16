@@ -210,9 +210,9 @@ kiosk_net_scale_bytes: 13107200   # 12.5 MiB/s
 # encrypted — so graphing both draws the same traffic twice.
 kiosk_net_primary: vmbr0
 
-# The Proxmox node name pvesh is queried for — not necessarily the same
-# string as the tailnet hostname, though here they both happen to be "pve".
-pve_node: pve
+# pve_node is NOT declared here any more. The watch guest needs it too and a
+# group cannot read another group's vars, so it moved to
+# group_vars/all/vars.yml — see rule 1: one fact, one declaration point.
 
 # ── Backups ──────────────────────────────────────────────────────────
 #
@@ -360,3 +360,49 @@ pve_guests:
       # choice, not an oversight; if it ever stops being the right one, the
       # fix is a second daily job, not a longer retention.
       keep_last: 4
+
+  - name: notify
+    service: notify
+    vmid: 998
+    # One core and a gigabyte: ntfy is a single Go binary whose whole job is
+    # holding subscription connections open, and Caddy in front of it. Measured
+    # rather than guessed once it is up; if it idles well under this it comes
+    # down.
+    cores: 1
+    memory_mb: 1024
+    # The OS and two container images are what actually fill a guest — ntfy's
+    # own data is a message cache measured in megabytes.
+    disk_gb: 20
+    # Next free below the vault's .21, and still under 1.1.1.100 where consumer
+    # routers start handing out leases.
+    ipv4: 1.1.1.22
+    # After the vault. Nothing depends on the ordering, but when the host comes
+    # back from a power cut the machine holding your passwords should get the
+    # disk first.
+    startup_order: 20
+    # Small, but worth keeping: the user database holds the two accounts and
+    # their grants. Losing it means re-creating them and re-subscribing the
+    # phone — five minutes of annoyance rather than a disaster, which is why
+    # this keeps two archives and not four.
+    backup:
+      schedule: "sat 00:00"
+      keep_last: 2
+
+  - name: watch
+    service: watch
+    vmid: 997
+    cores: 2
+    # Python holding a ring buffer of samples and serving a page. The old kiosk
+    # did more than this on the hypervisor itself.
+    memory_mb: 2048
+    disk_gb: 20
+    ipv4: 1.1.1.23
+    startup_order: 30
+    # No `backup:` key, and that is deliberate rather than an oversight. This
+    # guest holds NOTHING that is not derived: its history is in memory, its
+    # config is in this repo, and its secrets are in the GitHub Environment.
+    # Restoring it from an archive would be strictly worse than re-running the
+    # playbook, which rebuilds it from source in a few minutes.
+    #
+    # A guest with no `backup:` key gets no vzdump job — see pve_host's
+    # "Work out which guests should have a backup job".

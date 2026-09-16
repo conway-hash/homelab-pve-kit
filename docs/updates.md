@@ -1,7 +1,7 @@
 # Keeping the hypervisor up to date
 
 The short version: **security patches take themselves, everything else waits
-for you to approve it on the kiosk screen, and nothing reboots on its own.**
+for you to apply it over SSH, and nothing reboots on its own.**
 
 That split is deliberate. Automatic security patching is the part with a real
 cost to skipping — an unpatched OpenSSL is a hole whether or not you were
@@ -27,8 +27,13 @@ that file misses — currently Tailscale's own repo.
 
 A kernel *package* can be installed by the nightly run when it ships as a
 security update. Installing it does not put it in charge: the running kernel
-stays the old one until a reboot, and `/var/run/reboot-required` appears. The
-kiosk shows that as a **reboot pending** pill in the header the moment it does.
+stays the old one until a reboot, and `/var/run/reboot-required` appears.
+
+⚠️ `watch` cannot see that file — there is no Proxmox API for it, and reaching
+it would need an SSH path from the watch guest back into the hypervisor (see
+"Controls" in [watch.md](watch.md)). What `watch` *does* alert on is a **kernel
+package pending**, which is the same decision one step earlier: it tells you a
+reboot is going to be needed. The `mail` notice below is the other half.
 
 Proxmox separately mails root every night about pending packages
 (`pve_notify_package_updates: always`), delivered locally by postfix. Read it
@@ -39,47 +44,48 @@ anything.
 
 ## What you approve
 
-Everything else shows up in the kiosk's **notifications** panel, split into
-three groups that mean genuinely different things:
+[watch](watch.md) pushes these to your phone as they appear, and shows them on
+its dashboard. It distinguishes three things that mean genuinely different
+things:
 
-**"N security updates — taken automatically tonight."** Informational. Do
-nothing. They are already going to be installed.
+**`security_updates`.** Informational — they are already going to be installed
+tonight.
 
-**"N updates waiting for you."** Proxmox packages and non-security updates.
-Hold the button for 1.4 seconds and it runs
-`apt-get -y -o Dpkg::Options::=--force-confold dist-upgrade`. Config files you
-have edited are kept as-is (`--force-confold`) rather than prompting, because
-there is nobody at a terminal to answer the prompt.
+**`updates`.** Proxmox packages and non-security updates. Nothing takes these
+for you.
 
-**"N kernel updates."** Informational — it tells you a reboot is what makes
-them real. There is no button, because installing a kernel is part of the
-group above.
+**`kernel_update`.** The one that also implies a reboot, which is a decision
+rather than a routine patch, so it is flagged apart from the rest.
 
-**"Reboot pending."** Hold the button for 1.4 seconds and the host reboots.
-Every guest goes down with it.
-
-All of these are also doable over SSH, and the buttons change nothing about
-that:
+⚠️ **Applying them is over SSH.** The dashboard can reboot the node but
+deliberately cannot `dist-upgrade` it. There is no Proxmox API for applying
+updates, so it would need SSH from the watch guest to the host — and there is
+no safely-limited version of that, because `apt-get` runs maintainer scripts as
+root. The reasoning is in [watch.md](watch.md) under **Controls**.
 
 ```bash
 ssh ci-deploy@pve.ts.conway-hash.com 'sudo apt-get update && sudo apt-get -s dist-upgrade'
-ssh ci-deploy@pve.ts.conway-hash.com 'sudo apt-get -y dist-upgrade'
+ssh ci-deploy@pve.ts.conway-hash.com 'sudo apt-get -y -o Dpkg::Options::=--force-confold dist-upgrade'
 ssh ci-deploy@pve.ts.conway-hash.com 'sudo reboot'
 ```
+
+`--force-confold` keeps config files you have edited rather than prompting,
+because there is nobody at a terminal to answer the prompt.
 
 ---
 
 ## When to do it
 
 **Non-security package updates — whenever you notice them.** Low stakes. If
-the kiosk shows a handful and you are at the machine anyway, take them.
+`watch` has been nagging about a handful and you are at the machine anyway,
+take them.
 
 **Proxmox point releases (9.2.11 → 9.2.x) — monthly is plenty.** Read
 [the Proxmox roadmap](https://pve.proxmox.com/wiki/Roadmap) first if the
 version jumps more than a patch number. Services keep running through the
 upgrade itself; what changes is that `pveproxy`, `pvedaemon` and friends
-restart, so the web UI blinks and the kiosk's guest panel goes briefly empty.
-Guests are untouched.
+restart, so the web UI blinks and `watch` will briefly report the API
+unreachable. Guests are untouched.
 
 **Kernels — take the update whenever, reboot when it suits you.** A pending
 kernel is not urgent unless the changelog says it fixes something you are
@@ -97,14 +103,19 @@ repository changes. Not something to do because a number went up.
 The reboot itself is the only routinely disruptive thing in this document, so
 it gets a checklist.
 
-1. **Know what goes down.** Every guest. Right now that is `vault` (VM 999) —
-   your password manager is unreachable for the duration. If you need a
-   password during the reboot, get it out first; the Bitwarden clients cache
-   your vault locally and keep working offline, but a fresh login will not.
+1. **Know what goes down.** Every guest — `vault` (999), `notify` (998) and
+   `watch` (997). Your password manager is unreachable for the duration; the
+   Bitwarden clients cache your vault locally and keep working offline, but a
+   fresh login will not.
+
+   Note that `notify` and `watch` go down too, so **the reboot you started is
+   the one thing that cannot alert you about itself.** Expect silence, not
+   reassurance, and check afterwards.
 
 2. **Check the guests come back on their own.** They are configured to:
-   `onboot: 1` with `startup: order=10,up=30`. Nothing to do, but it is the
-   thing to check afterwards.
+   `onboot: 1` with a startup order (vault 10, notify 20, watch 30) and
+   `up=30` between them. Nothing to do, but it is the thing to check
+   afterwards.
 
 3. **Take a backup if you are about to do something bigger than a kernel.**
    The weekly job runs Saturday 00:00 and keeps the last 4, so the newest
@@ -124,7 +135,8 @@ it gets a checklist.
    ssh ci-deploy@pve.ts.conway-hash.com 'uptime; sudo qm list; systemctl --failed'
    ```
 
-   Or just look at the screen — the kiosk shows all three.
+   Or just look at the screen, which shows the `watch` dashboard — though give
+   it a minute, since that guest is itself still starting.
 
 ---
 

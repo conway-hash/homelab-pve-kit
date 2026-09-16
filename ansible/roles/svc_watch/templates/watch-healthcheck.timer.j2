@@ -1,0 +1,12 @@
+# Managed by Ansible (svc_watch) — edits will be overwritten.
+
+[Unit]
+Description=Check watch answers every {{ watch_selfheal_interval }}
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec={{ watch_selfheal_interval }}
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

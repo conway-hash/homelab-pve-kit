@@ -147,11 +147,20 @@ exactly what would change before anything is touched.
 | `TS_AUTHKEY` | Headscale pre-auth key, **ephemeral + reusable** | everything |
 | `PVE_API_TOKEN_SECRET` | Secret half of the Proxmox API token (step 6) | creating guests |
 
-Services bring their own secrets on top of these, named
-`SVC_<SERVICE>_<THING>` so you can tell at a glance which belong to what — and
-delete exactly those when you retire a service. They are listed in each
-service's own doc rather than here — a service you never turn on should not leave you
-wondering which of these rows you skipped. See
+The three above are repo-level secrets: infrastructure, shared by every job,
+outliving any single service.
+
+**A service's own secrets do not go here.** Each lives in a **GitHub
+Environment named after the service** (Settings → Environments), holding one
+secret called `SERVICE_SECRETS` whose value is that service's entire
+`secrets.yml` as YAML. Every service uses that same secret name, which is what
+lets one generic step in `deploy.yml` serve all of them without naming any — so
+adding a service touches nothing in `.github/`.
+
+Environment secrets are also only released to a job that declares that
+environment, so one service's credentials are never sent to another's deploy.
+The exact contents are in each service's own doc rather than here: a service you
+never turn on should not leave you wondering which rows you skipped. See
 [docs/README.md](docs/README.md).
 
 ⚠️ Where a service needs a tailnet key of its own, it is **not** `TS_AUTHKEY`.
@@ -256,14 +265,23 @@ its own file:
 ```yaml
 # ansible/group_vars/all/services.yml
 service_enabled:
-  kiosk: true
+  screen: true
   vault: true
+  notify: true
+  watch: true
 ```
 
 | Service | Flag | Setup |
 |---|---|---|
 | Vaultwarden | `vault` | [docs/vault.md](docs/vault.md) |
-| Kiosk dashboard | `kiosk` | [docs/kiosk.md](docs/kiosk.md) |
+| ntfy (push notifications) | `notify` | [docs/notify.md](docs/notify.md) |
+| watch (dashboard + alerts) | `watch` | [docs/watch.md](docs/watch.md) |
+| The physical monitor | `screen` | [docs/screen.md](docs/screen.md) |
+
+⚠️ `watch` needs its own Proxmox API token — **not** the one from step 6, which
+is `privsep 0` and can destroy every guest on the box. The `pveum` commands for
+a narrower one are in [docs/watch.md](docs/watch.md). And turn `notify` on
+first, or `watch` has nowhere to send what it finds.
 
 Each doc lists what that service needs **before** you turn it on — its
 credentials, its GitHub secrets, and how to check it actually works — plus

@@ -5,8 +5,10 @@ Every service in this repo is optional. The switches live in one file:
 ```yaml
 # ansible/group_vars/all/services.yml
 service_enabled:
-  kiosk: true
+  screen: true
   vault: true
+  notify: true
+  watch: true
 ```
 
 Three things read that file, and nothing holds a second copy of it:
@@ -21,8 +23,10 @@ Three things read that file, and nothing holds a second copy of it:
 
 | Service | Flag | Runs on | Setup |
 |---|---|---|---|
-| Kiosk dashboard | `kiosk` | the hypervisor | [kiosk.md](kiosk.md) |
 | Vaultwarden | `vault` | its own guest, VM 999 | [vault.md](vault.md) |
+| ntfy (push) | `notify` | its own guest, VM 998 | [notify.md](notify.md) |
+| watch (dashboard + alerts) | `watch` | its own guest, VM 997 | [watch.md](watch.md) |
+| The physical monitor | `screen` | the hypervisor | [screen.md](screen.md) |
 
 Not a service, but it lives here: [updates.md](updates.md) — what patches
 itself, what waits for your approval, and what to do when a reboot goes wrong.
@@ -45,7 +49,7 @@ secret and the doc that explains it, before it changes anything on the host.
 
 Set the flag to `false`. What that means depends on where the service lives:
 
-**A service on its own guest** (`vault`): the `pve_guests` role
+**A service on its own guest** (`vault`, `notify`, `watch`): the `pve_guests` role
 **destroys the VM** on the next run, disk included. Run with `--check --diff`
 first if you want to see it coming. Existing archives on `tank` outlive the
 guest, but restoring one is a manual job.
@@ -56,11 +60,11 @@ every night at the appointed hour, which trains you to ignore backup failure
 notifications — worse than having none. The same filter means a service that
 has never been switched on never gets a job in the first place.
 
-**A service on an existing machine** (`kiosk`): the role stops running, which
+**A service on an existing machine** (`screen`): the role stops running, which
 means nothing new is installed — but **what a previous run already installed
-stays**. Ansible has no undo. Turning the kiosk off stops it being converged;
-it does not remove `cage`, `cog`, the systemd units or the autologin stanza
-from a box that already had them. Removing those is a manual pass, once,
+stays**. Ansible has no undo. Turning `screen` off stops it being converged;
+it does not remove `cage`, `cog` or the `.bash_profile` stanza from a box that
+already had them, so the browser keeps launching until you remove it by hand. Removing those is a manual pass, once,
 documented in that service's own file.
 
 That asymmetry is real and worth knowing before you flip something expecting a

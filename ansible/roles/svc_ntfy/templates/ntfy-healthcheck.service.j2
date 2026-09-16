@@ -1,0 +1,9 @@
+# Managed by Ansible (svc_ntfy) — edits will be overwritten.
+
+[Unit]
+Description=Check ntfy answers, and restart the stack if it stops
+After=ntfy.service
+
+[Service]
+Type=oneshot
+ExecStart={{ ntfy_dir }}/healthcheck.sh
