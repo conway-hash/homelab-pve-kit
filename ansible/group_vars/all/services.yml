@@ -24,12 +24,7 @@ service_enabled:
   # there is no guest to create — this is purely a role toggle. All it does is
   # point a browser at the watch dashboard. See docs/screen.md.
   #
-  # ⚠️ OFF until `watch` is on, and deliberately in that order: this role points
-  # the screen at watch.ts.… and removes the kiosk. Enabling it first would
-  # uninstall a working dashboard and replace it with an error page. Until then
-  # the retired kiosk keeps running on the host untouched — Ansible has no undo,
-  # which is the one time that works in your favour.
-  screen: false
+  screen: true
 
   # Its own guest, VM 998. The homelab's push notification server — where every
   # service sends its alerts, and what the ntfy app on your phone subscribes to.
