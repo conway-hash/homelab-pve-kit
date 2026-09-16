@@ -25,7 +25,7 @@
       svc_watch_ntfy_password is unset, so watchd could collect everything and
       then have no way to tell you about it — the alerts would exist only on a
       page you are not looking at. It is the same value as
-      svc_ntfy_publisher_password on the notify guest; see docs/notify.md.
+      svc_ntfy_publisher_password on the ntfy guest; see docs/ntfy.md.
 
 - name: Refuse to deploy without the Cloudflare API token
   ansible.builtin.assert:

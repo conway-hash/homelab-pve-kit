@@ -61,7 +61,7 @@ watch_pve_token_id: "watch@pve!watchd"
 
 # ── Where alerts go ──────────────────────────────────────────────────
 
-# The topic on the notify guest. One topic per source, so a noisy service can
+# The topic on the ntfy guest. One topic per source, so a noisy service can
 # be muted in the ntfy app without muting everything — which is the reason
 # ntfy is shared rather than duplicated per service.
 watch_ntfy_topic: watch
@@ -126,7 +126,7 @@ watch_tls_hosts: >-
   {{
     ([watch_domain] if service_enabled.watch | default(false) else [])
     + (['vault.' ~ tailnet_base_domain] if service_enabled.vault | default(false) else [])
-    + ([ntfy_domain] if service_enabled.notify | default(false) else [])
+    + ([ntfy_domain] if service_enabled.ntfy | default(false) else [])
   }}
 
 # Guests that are expected to be off, by name or vmid. Without this, one you

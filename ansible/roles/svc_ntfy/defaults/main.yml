@@ -8,7 +8,7 @@
 #
 # Set for real in group_vars/ntfy_host/secrets.yml (git-ignored) or written by
 # CI from the `ntfy` GitHub Environment immediately before the playbook runs.
-# See docs/notify.md.
+# See docs/ntfy.md.
 
 # Password for the `publisher` account — the one every SERVICE authenticates as
 # to POST a notification. Write access, no read: a compromised publisher can

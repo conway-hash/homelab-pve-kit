@@ -52,14 +52,14 @@ Every service is optional, and every switch lives in one file:
 service_enabled:
   screen: true
   vault: true
-  notify: true
+  ntfy: true
   watch: true
 ```
 
 | Service | Flag | Runs on | Docs |
 |---|---|---|---|
 | Vaultwarden | `vault` | its own guest, VM 999 | [docs/vault.md](docs/vault.md) |
-| ntfy (push notifications) | `notify` | its own guest, VM 998 | [docs/notify.md](docs/notify.md) |
+| ntfy (push notifications) | `ntfy` | its own guest, VM 998 | [docs/ntfy.md](docs/ntfy.md) |
 | watch (dashboard + alerts) | `watch` | its own guest, VM 997 | [docs/watch.md](docs/watch.md) |
 | The physical monitor | `screen` | the hypervisor | [docs/screen.md](docs/screen.md) |
 
@@ -138,7 +138,7 @@ both just means two bots opening the same GitHub Actions PR. Dependabot
 docs/
 ├── README.md                 the switches, and what off actually means
 ├── vault.md                  one file per service — setup, checks, teardown
-├── notify.md
+├── ntfy.md
 ├── watch.md
 ├── screen.md
 └── updates.md                when to patch, when to reboot, and what breaks
@@ -152,7 +152,7 @@ ansible/
 │   │                         + the guest baseline
 │   ├── pve_host/vars.yml
 │   ├── vault_host/vars.yml
-│   ├── notify_host/vars.yml
+│   ├── ntfy_host/vars.yml
 │   └── watch_host/vars.yml
 └── roles/
     ├── pve_repos/ pve_host/ pve_guests/   the hypervisor, and the VMs it hosts

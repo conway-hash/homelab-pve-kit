@@ -267,14 +267,14 @@ its own file:
 service_enabled:
   screen: true
   vault: true
-  notify: true
+  ntfy: true
   watch: true
 ```
 
 | Service | Flag | Setup |
 |---|---|---|
 | Vaultwarden | `vault` | [docs/vault.md](docs/vault.md) |
-| ntfy (push notifications) | `notify` | [docs/notify.md](docs/notify.md) |
+| ntfy (push notifications) | `ntfy` | [docs/ntfy.md](docs/ntfy.md) |
 | watch (dashboard + alerts) | `watch` | [docs/watch.md](docs/watch.md) |
 | The physical monitor | `screen` | [docs/screen.md](docs/screen.md) |
 

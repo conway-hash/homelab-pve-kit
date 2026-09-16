@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Smoke test — notify (ntfy).
+# Smoke test — ntfy.
 #
 # See tests/vault.sh for the contract every tests/<service>.sh follows: cwd is
 # ansible/, the ci-deploy key is at ~/.ssh/homelab_ci_deploy, the runner is on
@@ -10,7 +10,7 @@ set -uo pipefail
 
 FAILED=0
 
-DOMAIN="notify.$(grep '^tailnet_base_domain:' group_vars/all/vars.yml \
+DOMAIN="ntfy.$(grep '^tailnet_base_domain:' group_vars/all/vars.yml \
   | sed 's/^tailnet_base_domain:[[:space:]]*//; s/[[:space:]]*#.*$//')"
 
 SSH="ssh -i $HOME/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new"

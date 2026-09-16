@@ -1,7 +1,7 @@
 # watch — the analyser, dashboard and alert source
 
 Reads the hypervisor over the Proxmox API, decides what needs doing, pushes it
-to [notify](notify.md), and serves the dashboard at
+to [ntfy](ntfy.md), and serves the dashboard at
 `watch.ts.conway-hash.com`. Its own guest, VM 997.
 
 This replaced `pve_kiosk`.

@@ -16,8 +16,8 @@
     fail_msg: >-
       svc_ntfy_publisher_password is unset. Nothing could publish a
       notification, so every alert this homelab produces would be silently
-      dropped. Put it in group_vars/notify_host/secrets.yml — see
-      docs/notify.md.
+      dropped. Put it in group_vars/ntfy_host/secrets.yml — see
+      docs/ntfy.md.
 
 - name: Refuse to deploy without the phone password
   ansible.builtin.assert:
@@ -25,7 +25,7 @@
     fail_msg: >-
       svc_ntfy_phone_password is unset, so the ntfy app has no account to log
       in as and you would never receive an alert. Put it in
-      group_vars/notify_host/secrets.yml — see docs/notify.md.
+      group_vars/ntfy_host/secrets.yml — see docs/ntfy.md.
 
 - name: Refuse to deploy without the Cloudflare API token
   ansible.builtin.assert:
@@ -35,7 +35,7 @@
       DNS-01 challenge and will never obtain a certificate. The ntfy Android
       app refuses a server whose certificate it cannot verify, so this is not a
       nice-to-have. Mint one from Cloudflare's "Edit zone DNS" template,
-      restricted to the single zone — see docs/notify.md.
+      restricted to the single zone — see docs/ntfy.md.
 
 # ── What the stack is allowed to listen on ───────────────────────────
 #
@@ -43,7 +43,7 @@
 # address as well as a tailnet one. A bare `ports: 443:443` would put the
 # notification server on the home LAN, reachable by every device on it. The
 # vault shipped exactly that bug once; binding to the tailnet address is what
-# makes the claim in docs/notify.md true. There is no firewall involved — the
+# makes the claim in docs/ntfy.md true. There is no firewall involved — the
 # socket simply does not exist on the LAN interface.
 
 - name: Read the guest's tailnet address
@@ -63,7 +63,7 @@
     fail_msg: >-
       `tailscale ip -4` returned nothing, so this guest is not on the tailnet.
       Deploying now would publish ntfy on every interface it has, including the
-      LAN. Fix the tailnet join first — see docs/notify.md.
+      LAN. Fix the tailnet join first — see docs/ntfy.md.
 
 - name: Create the stack directory
   ansible.builtin.file:

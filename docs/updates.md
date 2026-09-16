@@ -113,7 +113,7 @@ it gets a checklist.
    reassurance, and check afterwards.
 
 2. **Check the guests come back on their own.** They are configured to:
-   `onboot: 1` with a startup order (vault 10, notify 20, watch 30) and
+   `onboot: 1` with a startup order (vault 10, ntfy 20, watch 30) and
    `up=30` between them. Nothing to do, but it is the thing to check
    afterwards.
 

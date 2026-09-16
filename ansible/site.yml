@@ -87,7 +87,7 @@
     - svc_vaultwarden
 
 - name: Converge the notification server
-  hosts: notify_host
+  hosts: ntfy_host
   become: true
 
   # Deferred on purpose, same as the vault play: fact gathering is the play's
@@ -97,9 +97,9 @@
   gather_facts: false
 
   pre_tasks:
-    - name: Stop here if notify is switched off
+    - name: Stop here if ntfy is switched off
       ansible.builtin.meta: end_play
-      when: not (service_enabled.notify | bool)
+      when: not (service_enabled.ntfy | bool)
 
     - name: Gather facts
       ansible.builtin.setup:
@@ -126,7 +126,7 @@
     - name: Gather facts
       ansible.builtin.setup:
 
-  # Listed after notify, but do NOT read that as an ordering guarantee: CI
+  # Listed after ntfy, but do NOT read that as an ordering guarantee: CI
   # matrixes the guest plays and runs them in PARALLEL, so on a first deploy
   # this guest may well come up before there is anything to push to. It is
   # only a local `ansible-playbook site.yml` that runs them in file order.

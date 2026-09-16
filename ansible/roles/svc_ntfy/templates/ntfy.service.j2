@@ -3,7 +3,7 @@
 # Layer 2 of coming back on its own. The containers' `restart: unless-stopped`
 # would bring them up after a reboot without this unit at all; what the unit
 # adds is a single name that Ansible's handlers and the self-heal timer can
-# restart the whole stack by, and a `systemctl status` answer to "is notify
+# restart the whole stack by, and a `systemctl status` answer to "is ntfy
 # meant to be running".
 
 [Unit]

@@ -24,11 +24,11 @@
 # See docs/watch.md for what each privilege is actually for.
 svc_watch_pve_token_secret: ""
 
-# Password for the `publisher` account on the notify guest. The SAME value as
+# Password for the `publisher` account on the ntfy guest. The SAME value as
 # svc_ntfy_publisher_password over there — one account that every service
 # publishes as. It is declared in both services' secrets because neither guest
 # can read the other's, which is the one place this repo tolerates a value
-# living twice; docs/notify.md says so out loud.
+# living twice; docs/ntfy.md says so out loud.
 svc_watch_ntfy_password: ""
 
 # Bearer token gating the control endpoints — reboot the node, start or stop a

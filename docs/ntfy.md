@@ -1,13 +1,28 @@
-# notify — push notifications
+# ntfy — push notifications
 
 The homelab's notification server: [ntfy](https://ntfy.sh), on its own guest
-(VM 998), reachable at `notify.ts.conway-hash.com` over the tailnet and nowhere
+(VM 998), reachable at `ntfy.ts.conway-hash.com` over the tailnet and nowhere
 else. Every service that needs to tell you something publishes here; the ntfy
 app on your phone subscribes.
 
-Service `notify`, role `svc_ntfy` — named for what it does, running what it is,
-the same split as `vault`/`svc_vaultwarden`. If ntfy is ever swapped for
-Gotify, the service keeps its name and nothing your phone points at moves.
+Called `ntfy` everywhere — the flag, the guest, the group, the role, the
+hostname, the GitHub Environment. One name, so there is nothing to translate
+between layers and no second name to remember when you are pasting a secret at
+midnight.
+
+The naming rule for this repo, stated once so it does not have to be argued
+again:
+
+- **A real project keeps its real name.** ntfy is called ntfy, so it is `ntfy`
+  at every layer.
+- **Shortening that name is fine** where the short form is still part of it —
+  `vault` for `svc_vaultwarden` is the existing example, and `vaultwarden`
+  everywhere would just be long for no gain.
+- **Substituting a different word is not.** `notify` for ntfy was the mistake
+  this file used to document: two names for one thing, in a repo where the
+  secret key and the hostname have to agree.
+- **Something with no upstream gets a real word.** `watch` and `screen` were
+  named here, so they are named for what they do rather than invented.
 
 ## Why its own guest
 
@@ -18,7 +33,7 @@ everything else — the worst way for a monitoring system to fail, because
 nothing tells you it happened.
 
 The hostname is deliberately independent of the guest that runs it. Your phone
-subscribes to `notify.ts.…`, so moving the service later costs nothing on the
+subscribes to `ntfy.ts.…`, so moving the service later costs nothing on the
 client side.
 
 ## Topics
@@ -48,7 +63,7 @@ else has been sending.
 this guest. ntfy's **default** is read-write for anonymous users — every topic
 world-readable and world-writable to anything that can reach the server. On a
 tailnet that still means every device you own plus anything that ever joins.
-`tests/notify.sh` asserts that anonymous publish AND anonymous read are both
+`tests/ntfy.sh` asserts that anonymous publish AND anonymous read are both
 refused, because a server that is perfectly healthy and completely open looks
 identical to a working one from the outside.
 
@@ -75,7 +90,7 @@ changing both.
 ## Setting up the phone
 
 1. Install [ntfy](https://ntfy.sh/docs/subscribe/phone/) from F-Droid or Play
-2. Settings → **Manage users** → add `notify.ts.conway-hash.com` with the
+2. Settings → **Manage users** → add `ntfy.ts.conway-hash.com` with the
    `phone` account
 3. Subscribe to the `watch` topic
 4. Leave **instant delivery** on
@@ -100,7 +115,7 @@ when it stops. Not built; worth knowing it is a separate job.
 
 ## Turning it off
 
-Set `notify: false`. The `pve_guests` role **destroys VM 998** on the next run
+Set `ntfy: false`. The `pve_guests` role **destroys VM 998** on the next run
 of the hypervisor play, disk included. Nothing else breaks — `watch` keeps
 collecting and its dashboard keeps serving — but every alert is dropped
 silently. Check `tests/watch.sh` still passes and remember you are now relying

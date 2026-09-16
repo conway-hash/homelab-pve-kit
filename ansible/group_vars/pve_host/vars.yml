@@ -361,8 +361,8 @@ pve_guests:
       # fix is a second daily job, not a longer retention.
       keep_last: 4
 
-  - name: notify
-    service: notify
+  - name: ntfy
+    service: ntfy
     vmid: 998
     # One core and a gigabyte: ntfy is a single Go binary whose whole job is
     # holding subscription connections open, and Caddy in front of it. Measured

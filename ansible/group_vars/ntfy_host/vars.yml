@@ -1,11 +1,15 @@
 ---
-# The notify guest — the homelab's push notification server, and nothing else.
+# The ntfy guest — the homelab's push notification server, and nothing else.
 #
-# Named `notify` for what it DOES, running `svc_ntfy` for what it IS — the same
-# split as vault/svc_vaultwarden. The service name is the one that appears in
-# services.yml, the inventory, the GitHub Environment and the hostname your
-# phone subscribes to; the role name is the product. If ntfy is ever swapped
-# for Gotify, the service keeps its name and nothing your phone points at moves.
+# One name, everywhere: the flag, the guest, the group, the role, the hostname
+# and the GitHub Environment are all `ntfy` — a real project keeps its real
+# name, so nothing has to be translated between layers.
+#
+# Shortening is still fine where the short form is part of the real name, which
+# is why `vault` fronts svc_vaultwarden. What is not fine is substituting a
+# different word: `notify` for ntfy was tried here and lasted about a day,
+# because the secret key and the hostname have to agree and two names for one
+# thing guarantees they eventually will not. See docs/ntfy.md.
 #
 # Its own guest rather than a container inside whichever service happened to
 # need it first. Notifications are infrastructure: every service publishes to

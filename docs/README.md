@@ -7,7 +7,7 @@ Every service in this repo is optional. The switches live in one file:
 service_enabled:
   screen: true
   vault: true
-  notify: true
+  ntfy: true
   watch: true
 ```
 
@@ -24,7 +24,7 @@ Three things read that file, and nothing holds a second copy of it:
 | Service | Flag | Runs on | Setup |
 |---|---|---|---|
 | Vaultwarden | `vault` | its own guest, VM 999 | [vault.md](vault.md) |
-| ntfy (push) | `notify` | its own guest, VM 998 | [notify.md](notify.md) |
+| ntfy (push) | `ntfy` | its own guest, VM 998 | [ntfy.md](ntfy.md) |
 | watch (dashboard + alerts) | `watch` | its own guest, VM 997 | [watch.md](watch.md) |
 | The physical monitor | `screen` | the hypervisor | [screen.md](screen.md) |
 

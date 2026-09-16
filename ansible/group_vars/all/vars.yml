@@ -85,11 +85,14 @@ pve_node: pve
 # true for every machine: any service may need to say something, and they must
 # all say it to the same place or the phone ends up with two subscriptions.
 #
-# ⚠️ The hostname is deliberately independent of the guest that happens to run
-# ntfy today. The phone subscribes to THIS name, so moving the service later —
-# to another guest, or into a stack — costs nothing on the client side. Do not
-# fold it under a service's own name.
-ntfy_domain: "notify.{{ tailnet_base_domain }}"
+# ⚠️ Declared here rather than in the ntfy guest's own group_vars, and not
+# because of where it runs: every service that publishes needs to know it, and
+# a group cannot read another group's vars.
+#
+# It is also what the phone subscribes to. Keeping it a name in its own right —
+# rather than a path under whichever service publishes most — is what lets ntfy
+# move to a different guest later without re-subscribing every device.
+ntfy_domain: "ntfy.{{ tailnet_base_domain }}"
 
 # The account every service publishes as. Write-only: a compromised publisher
 # can make your phone buzz, it cannot read back what anything else has sent.
