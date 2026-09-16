@@ -117,8 +117,8 @@ jobs:
           "$ANSIBLE_PY" -m pip install --quiet 'proxmoxer>=2.3' requests
           "$ANSIBLE_PY" -c 'import proxmoxer; print("proxmoxer", proxmoxer.__version__)'
           ansible-galaxy collection install -r requirements.yml
-          # For the secrets step, which reads this group's svc_secret_prefix
-          # out of its vars.yml and writes the secrets file back as YAML.
+          # For the smoke test below, which reads the switches to know which
+          # guests are meant to be up.
           pip install --quiet pyyaml
 
       - name: Join the tailnet

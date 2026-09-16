@@ -7,13 +7,8 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Count secrets without printing any value
+      - name: Control — one named secret, no toJSON
         env:
-          ALL_SECRETS: ${{ toJSON(secrets) }}
+          ONE_SECRET: ${{ secrets.TS_AUTHKEY }}
         run: |
-          python3 -c "
-          import json, os
-          d = json.loads(os.environ['ALL_SECRETS'])
-          print('secret count:', len(d))
-          print('names:', ', '.join(sorted(d)))
-          "
+          echo "control ran; secret is ${#ONE_SECRET} chars"
