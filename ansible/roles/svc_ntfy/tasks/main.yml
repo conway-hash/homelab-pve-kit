@@ -324,16 +324,36 @@
       permission: read-only
   loop_control:
     label: "{{ item.name }} → {{ item.permission }} on *"
-  # `ntfy access` prints each user followed by its grants:
+  # `ntfy access` prints each user followed by its grants, in this exact shape:
   #
   #   user publisher (role: user, tier: none)
-  #   - write-only       *
+  #   - write-only access to topic *
   #
-  # so a grant is already in place when the permission and the wildcard appear
-  # on one line somewhere after that user's header.
+  # Plain substring tests, not a regex, for two reasons. The wildcard topic is
+  # a literal `*`, which a regex would read as a quantifier and would have to
+  # be escaped; and Jinja has no raw-string literal, so the obvious `r'\s+\*'`
+  # is not a string at all — it parses as the name `r` followed by a string and
+  # fails at RUNTIME with "expected token ','". That cost a deploy: every other
+  # check in this role is evaluated offline, but `changed_when` only runs
+  # against real registered output.
+  #
+  # Reporting only. The command above is idempotent and runs unconditionally,
+  # so a wrong answer here is cosmetic — never a grant that silently never
+  # converges.
+  vars:
+    # This user's block of the listing: from its header up to the next user's.
+    #
+    # Scoped rather than searching the whole output, because two accounts share
+    # one listing — testing for `user phone` and `write-only access to topic *`
+    # independently passes when publisher holds the write grant and phone does
+    # not. Today that pairing cannot occur, since the two accounts always get
+    # opposite permissions; it would the moment a third account is added, and a
+    # convergence check that is only accidentally right is not worth keeping.
+    _svc_ntfy_grants: >-
+      {{ ((svc_ntfy_access.stdout ~ '\nuser ').split('user ' ~ item.name ~ ' ')[1:]
+          | first | default('', true)).split('\nuser ')[0] }}
   changed_when: >-
-    svc_ntfy_access.stdout is not search('user ' + item.name)
-    or svc_ntfy_access.stdout is not search(item.permission + r'\s+\*')
+    ('- ' ~ item.permission ~ ' access to topic *') not in _svc_ntfy_grants
 
 # ── Layer 3: it is running but not answering ─────────────────────────
 #
