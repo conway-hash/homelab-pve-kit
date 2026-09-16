@@ -25,9 +25,48 @@ That costs milliseconds. Three things follow:
 - **The hypervisor holds no application code again.** It runs a browser
   ([screen.md](screen.md)) and nothing else.
 
-What was lost with the screen: per-core CPU graphs, GPU temperature, and
-`/proc`-level detail. All of it existed to fill a 1-second graph on a monitor,
-and none of it is in an alert.
+## The dashboard
+
+The kiosk's dashboard, kept — same layout, same one-colour-per-resource rule,
+same cards — moved onto watchd's data and reworked for a phone, which is now
+the screen it is most often opened on because a notification put it there.
+
+| Card | Source |
+|---|---|
+| header pills | internet reachability, Headscale probe, uptime, reboot pending |
+| system | cpu + load, memory + swap + KSM, host network, storage |
+| machines | per-guest cpu, memory, network, and when it was last backed up |
+| logs | recent node tasks |
+| backup jobs | `/cluster/backup` — whether anything is even going to try |
+| alerts | the same list that gets pushed |
+
+**Three panels from the original are gone**, none of them by preference:
+
+- **GPU** and **per-core CPU / CPU temperature** came from `/proc` and `sysfs`
+  on the hypervisor. A guest cannot read those, and there is no API for them.
+- **The tailnet graph** came from `tailscale status`, which is not in the
+  Proxmox API either.
+
+Restoring any of them needs an agent running on the hypervisor, which is the
+thing moving to a guest was meant to avoid. Two things that *looked* equally
+lost turned out not to be, and are back: **host network history** comes from
+`rrddata` (the only place this API keeps node network counters), and **reboot
+pending** is derived from the `RunningKernel` flag in `apt/versions`, since
+`/var/run/reboot-required` is a file with no endpoint.
+
+⚠️ The network series is one point per minute. Everything else on the page
+moves at whatever the picker says, so at 1s the network chart is visibly a
+step while cpu and memory are smooth. That is the real resolution of the only
+available source, shown honestly rather than interpolated into looking better.
+
+### Phone layout
+
+The original had a single 900px breakpoint that dropped to one column. There
+are four now — laptop, tablet, phone, narrow phone — and on a phone the card
+order changes rather than just stacking: **alerts first**, then machines, then
+the numbers. A page opened by tapping a notification should answer "what is
+wrong" before it draws a CPU chart. The header sticks, so the refresh picker
+and the reachability pills stay reachable while scrolling.
 
 ## What it watches
 

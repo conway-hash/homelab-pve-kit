@@ -88,6 +88,10 @@ DASHBOARD_URL = env("WATCH_DASHBOARD_URL", required=True).rstrip("/")
 # device you own is on that tailnet, and so is anything that ever joins it.
 CONTROL_TOKEN = env("WATCH_CONTROL_TOKEN", "")
 
+# The Headscale coordination server, probed for the header pill. Not fatal if
+# unset — the pill just reports unknown.
+CONTROL_URL = env("WATCH_CONTROL_URL", "").rstrip("/")
+
 LISTEN_PORT = env_int("WATCH_PORT", 8080)
 
 # ── Sampling ──
@@ -212,6 +216,23 @@ class Proxmox:
     def backup_jobs(self):
         return self.get("/cluster/backup") or []
 
+    def recent_tasks(self, limit=60):
+        # Everything, not just vzdump: this feeds the log panel, where the point
+        # is seeing what the node has been doing at all.
+        return self.get(f"/nodes/{PVE_NODE}/tasks?limit={limit}&source=all") or []
+
+    def rrd(self, timeframe="hour"):
+        # The only source of host NETWORK counters in this API — /nodes/status
+        # has none. 60 points at one-minute resolution, already averaged into
+        # bytes/sec, so the series is both the current rate and its history.
+        return self.get(f"/nodes/{PVE_NODE}/rrddata?timeframe={timeframe}") or []
+
+    def apt_versions(self):
+        # Carries a RunningKernel flag per package, which is the only way this
+        # API will tell you a reboot is pending — /var/run/reboot-required is a
+        # file on the host and there is no endpoint for it.
+        return self.get(f"/nodes/{PVE_NODE}/apt/versions") or []
+
 
 PVE = Proxmox()
 
@@ -241,6 +262,30 @@ def cert_days_left(host, port=443, timeout=8):
     return (expires - datetime.now(timezone.utc)).total_seconds() / 86400
 
 
+def tcp_reachable(host, port=443, timeout=4):
+    """A bare TCP connect. No request is sent, so nothing is logged as traffic
+    on the far end and nothing depends on what it would have replied."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def http_status(url, timeout=6):
+    """Status code for a URL, or None. Any answer at all means the far end is
+    up — a 404 from Headscale still proves Headscale is running, so this
+    deliberately does not care which code came back."""
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+    except (urllib.error.URLError, socket.timeout, OSError):
+        return None
+
+
 # ── Collection ───────────────────────────────────────────────────────
 
 def _pct(used, total):
@@ -267,13 +312,27 @@ def collect():
     status = attempt("status", PVE.node_status, {})
     mem = status.get("memory") or {}
     root = status.get("rootfs") or {}
+    ci = status.get("cpuinfo") or {}
+    swap = status.get("swap") or {}
     state["host"] = {
         "cpu": round((status.get("cpu") or 0) * 100, 1),
-        "cores": (status.get("cpuinfo") or {}).get("cpus"),
+        "iowait": round((status.get("wait") or 0) * 100, 2),
+        "cores": ci.get("cpus"),
+        # The label under the cpu heading: what the chip actually is, rather
+        # than a core count that could be any machine.
+        "cpu_model": ci.get("model"),
+        "cpu_physical": ci.get("cores"),
+        "cpu_mhz": ci.get("mhz"),
         "loadavg": status.get("loadavg") or [],
         "uptime": status.get("uptime"),
         "kernel": status.get("current-kernel") or {},
         "pveversion": status.get("pveversion"),
+        "swap": {
+            "used": swap.get("used", 0),
+            "total": swap.get("total", 0),
+            "pct": _pct(swap.get("used", 0), swap.get("total", 0)),
+        },
+        "ksm": (status.get("ksm") or {}).get("shared", 0),
         "memory": {
             "used": mem.get("used", 0),
             "total": mem.get("total", 0),
@@ -298,11 +357,18 @@ def collect():
             "running": g.get("status") == "running",
             "uptime": g.get("uptime") or 0,
             "cpu": round((g.get("cpu") or 0) * 100, 1),
+            "cpus": g.get("cpus"),
             "memory": {
                 "used": g.get("mem", 0),
                 "total": g.get("maxmem", 0),
                 "pct": _pct(g.get("mem", 0), g.get("maxmem", 0)),
             },
+            # Allocated, not used-inside-the-guest. Proxmox reports `disk` as 0
+            # for a running qemu guest — it cannot see inside the filesystem
+            # without the agent — so only maxdisk is meaningful here, and the
+            # card says "disk" rather than implying a usage figure.
+            "disk": g.get("maxdisk", 0),
+            "net": {"in": g.get("netin", 0), "out": g.get("netout", 0)},
         })
     guests.sort(key=lambda g: g["vmid"] or 0)
     state["guests"] = guests
@@ -476,6 +542,92 @@ def collect():
         })
     state["certs"] = certs
 
+    # ── host network ──
+    #
+    # RRD is the only place this API keeps network counters for the NODE —
+    # /nodes/status has none at all. The values are already averaged into
+    # bytes/sec, so the series is simultaneously the current rate and its
+    # history.
+    #
+    # ⚠️ One-minute resolution, which is coarser than everything else on the
+    # page. Picking 1s on the dashboard makes the cpu and memory lines move
+    # every second and leaves this one a step chart, and that is honest rather
+    # than broken: there is no faster source without an agent on the host.
+    rrd = attempt("rrd", PVE.rrd, [])
+    net_in = [round(p.get("netin") or 0) for p in rrd if p.get("time")]
+    net_out = [round(p.get("netout") or 0) for p in rrd if p.get("time")]
+    state["net"] = {
+        "in": net_in[-1] if net_in else 0,
+        "out": net_out[-1] if net_out else 0,
+        "in_series": net_in[-60:],
+        "out_series": net_out[-60:],
+        "resolution": "1 min",
+    }
+
+    # ── is a reboot pending ──
+    #
+    # /var/run/reboot-required is a file on the host and this API has no
+    # endpoint for it. apt/versions does carry a RunningKernel flag, which
+    # answers the same question from the other side: the kernel package that is
+    # installed is not the one currently booted.
+    running_kernel = (state["host"].get("kernel") or {}).get("release") or ""
+    # Without a running kernel to compare against, EVERY installed kernel
+    # package sorts as newer than the empty string and the pill would light up
+    # permanently. Not knowing is not the same as pending.
+    kernel_pkgs = [] if not running_kernel else [
+        v for v in attempt("apt_versions", PVE.apt_versions, [])
+        if (v.get("Package") or "").startswith(("proxmox-kernel-", "pve-kernel-"))
+    ]
+    newer = sorted(
+        (v.get("Package", "") for v in kernel_pkgs
+         if not v.get("RunningKernel")
+         and (v.get("Package") or "").replace("proxmox-kernel-", "")
+             .replace("pve-kernel-", "") > running_kernel),
+    )
+    state["reboot_pending"] = bool(newer)
+    state["reboot_for"] = newer[:5]
+
+    # ── recent node activity, for the log panel ──
+    logs = []
+    for t in attempt("recent_tasks", PVE.recent_tasks, []):
+        status_text = t.get("status") or ("running" if not t.get("endtime") else "")
+        logs.append({
+            "t": t.get("endtime") or t.get("starttime") or 0,
+            "type": t.get("type") or "",
+            "who": (t.get("user") or "").split("@")[0],
+            "id": t.get("id") or "",
+            "status": status_text,
+            "ok": status_text.upper() in ("OK", "RUNNING", ""),
+        })
+    logs.sort(key=lambda x: -x["t"])
+    state["logs"] = logs[:60]
+
+    # ── backup jobs, as configured ──
+    #
+    # The job list answers a question the guest cards cannot: not "when was this
+    # backed up" but "is anything even going to try".
+    jobs = []
+    for j in attempt("backup_jobs_list", PVE.backup_jobs, []):
+        jobs.append({
+            "id": j.get("id"),
+            "comment": j.get("comment") or "",
+            "vmid": str(j.get("vmid") or ("all" if j.get("all") else "?")),
+            "schedule": j.get("schedule") or "",
+            "storage": j.get("storage") or "",
+            "enabled": bool(j.get("enabled", 1)),
+            "keep": (j.get("prune-backups") or ""),
+        })
+    state["backup_jobs"] = jobs
+
+    # ── reachability, for the header pills ──
+    state["reach"] = {
+        # A bare TCP connect to a public resolver. Cheap, and it distinguishes
+        # "this box has no route out" from "one service is down".
+        "internet": tcp_reachable("1.0.0.1", 443),
+        "control_url": CONTROL_URL,
+        "control": (http_status(CONTROL_URL) is not None) if CONTROL_URL else None,
+    }
+
     return state
 
 
@@ -583,6 +735,33 @@ def evaluate(state):
             f"service_failed:{f['name']}", "critical",
             f"{f['name']} is {f['state']}",
             f"A Proxmox service on {PVE_NODE} is not running.",
+        ))
+
+    if state.get("reboot_pending"):
+        out.append((
+            "reboot_pending", "warn",
+            "Reboot pending",
+            "A newer kernel is installed but not running: "
+            + ", ".join(state.get("reboot_for") or [])
+            + "\nInstalling it did not put it in charge — the running kernel "
+              "stays the old one until a reboot.",
+        ))
+
+    if not state.get("reach", {}).get("internet", True):
+        out.append((
+            "internet_down", "critical",
+            "The hypervisor has no route out",
+            "A TCP connect to a public resolver failed. Certificate renewal "
+            "and every update check depend on this.",
+        ))
+
+    if state.get("reach", {}).get("control") is False:
+        out.append((
+            "headscale_down", "warn",
+            "Coordination server unreachable",
+            f"{state['reach'].get('control_url')} did not answer. Existing "
+            "tailnet connections keep working; new joins and key exchanges "
+            "do not.",
         ))
 
     u = state["updates"]
