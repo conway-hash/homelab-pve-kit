@@ -241,7 +241,9 @@ function render(d) {
       <div class="muted" style="margin-top:6px">
         cpu ${g.cpu.toFixed(1)}% · mem ${g.memory.pct}% (${bytes(g.memory.used)})
         · up ${dur(g.uptime)}</div>
-      <div class="muted">backup ${age === null ? "— none" :
+      <div class="muted">backup ${
+        !(s.backup_scheduled || []).includes(g.vmid) ? "— not scheduled" :
+        age === null ? "— none yet" :
         age.toFixed(1) + " days old (" + esc(b.source) + ")"}</div>
       <div class="bar"><i class="${cls(g.memory.pct)}" style="width:${g.memory.pct}%"></i></div>
     </div>`;

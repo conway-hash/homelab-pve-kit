@@ -209,6 +209,9 @@ class Proxmox:
     def services(self):
         return self.get(f"/nodes/{PVE_NODE}/services") or []
 
+    def backup_jobs(self):
+        return self.get("/cluster/backup") or []
+
 
 PVE = Proxmox()
 
@@ -383,6 +386,35 @@ def collect():
             success[vmid] = rec
     state["vzdump"] = {str(k): v for k, v in attempt_.items()}
 
+    # ── which guests are supposed to be backed up at all ──
+    #
+    # Without this, a guest with no backup job is judged against a schedule it
+    # was never on. Two ways that goes wrong, and both were live:
+    #
+    #   * `watch` deliberately has no job — it holds nothing that is not
+    #     derived. Reporting it as stale would be nagging about a decision
+    #     already made, and reporting it as fine would be worse.
+    #   * vmids are RECYCLED, so `watch` on vmid 997 inherited the destroyed
+    #     finance guest's task history and read as "backed up 5 days ago". With
+    #     no job of its own it would never get a newer task to correct that, so
+    #     the lie would have stood until the task log rotated past it — months.
+    #
+    # A job with `all` set covers every guest, which is why it is not simply a
+    # vmid lookup.
+    scheduled = set()
+    covers_all = False
+    for job in attempt("backup_jobs", PVE.backup_jobs, []):
+        if not job.get("enabled", 1):
+            continue
+        if job.get("all"):
+            covers_all = True
+        for part in str(job.get("vmid") or "").split(","):
+            if part.strip().isdigit():
+                scheduled.add(int(part.strip()))
+    if covers_all:
+        scheduled |= {g["vmid"] for g in guests}
+    state["backup_scheduled"] = sorted(scheduled)
+
     # ── when each guest was last backed up ──
     #
     # One answer per guest, with the source named, so the dashboard and the
@@ -390,6 +422,10 @@ def collect():
     last = {}
     for g in guests:
         vmid = g["vmid"]
+        if vmid not in scheduled:
+            # No job, so any task history on this vmid belongs to whatever held
+            # the number before it. Better to say nothing than to quote it.
+            continue
         arc = newest.get(vmid)
         suc = success.get(vmid)
         if arc:
@@ -476,6 +512,11 @@ def evaluate(state):
                 f"{name} is {g['status']}",
                 f"VM {vmid} ({name}) is not running.",
             ))
+
+        if vmid not in state["backup_scheduled"]:
+            # Not on a backup schedule, so there is nothing to be late for.
+            # Silence here is the correct output, not a gap in coverage.
+            continue
 
         b = state["backup_last"].get(str(vmid))
         age = _age_hours(b["t"]) if b else None

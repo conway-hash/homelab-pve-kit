@@ -64,12 +64,23 @@ backwards, so the token does not have it and this source is normally empty.
 **The vzdump task log** is what actually answers, and needs only `Sys.Audit`.
 It records when a backup last completed and whether it succeeded.
 
+**Only guests with an enabled backup job are judged at all.** `/cluster/backup`
+says which those are, and a guest that is not on it gets no backup alerts and
+shows "not scheduled" — silence is the correct output, not a gap. `watch`
+itself is the example: it holds nothing that is not derived, so it has no job.
+
+That check also contains the next problem rather than merely documenting it.
+
 ⚠️ **The task log is keyed by vmid, and vmids get recycled.** A guest created on
 a vmid a destroyed guest used to hold inherits its predecessor's backup
 history, which reads as "recently backed up" for a machine that has never been
-backed up at all. It corrects itself as soon as the new guest's first real
-backup runs — at worst one weekly cycle — but during that window this is a
-false negative on the alert that matters most.
+backed up at all. Both new guests did exactly this on their first run, reporting
+backups taken by the `links` and `finance` guests that used to hold 998 and 997.
+
+For a guest **with** a job this self-corrects after one weekly cycle, when a
+real backup produces a newer task. For a guest **without** one it never would —
+nothing new would ever arrive to displace the inherited entry — which is why
+unscheduled guests are excluded outright rather than trusted and watched.
 
 If you ever decide the archive listing is worth `Datastore.Allocate`, nothing
 in `watchd` needs changing: it already prefers archives whenever they are
