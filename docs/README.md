@@ -71,7 +71,12 @@ sense it can reverse.
 ## Adding a service
 
 See **Adding a service** in the [root README](../README.md). The short
-version: a role, a play, an inventory group, and a line in `services.yml`
-whose name matches the group minus `_host`. CI fails loudly if a play has no
-matching flag, so a typo in either file cannot silently produce a service with
-no switch.
+version: a role, a play, an inventory group, a line in `services.yml` whose
+name matches the group minus `_host`, an `svc_secret_prefix:` in the group's
+`vars.yml`, and a `tests/<name>.sh`.
+
+None of it touches `.github/`. CI finds the guest from `site.yml`, its secrets
+from the prefix and its smoke test from the filename, so there is no workflow
+list to keep in step. It fails loudly if a play has no matching flag, and a
+guest with no test file fails its own deploy — so neither a typo nor a missing
+test can produce a service that looks deployed and is not.

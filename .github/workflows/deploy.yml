@@ -117,8 +117,8 @@ jobs:
           "$ANSIBLE_PY" -m pip install --quiet 'proxmoxer>=2.3' requests
           "$ANSIBLE_PY" -c 'import proxmoxer; print("proxmoxer", proxmoxer.__version__)'
           ansible-galaxy collection install -r requirements.yml
-          # For the smoke test, which reads the switches to know which guests
-          # are meant to be up.
+          # For the secrets step, which reads this group's svc_secret_prefix
+          # out of its vars.yml and writes the secrets file back as YAML.
           pip install --quiet pyyaml
 
       - name: Join the tailnet
@@ -128,7 +128,7 @@ jobs:
         # own, which is a different scope from the non-ephemeral key a
         # permanent machine joins with. Don't reuse one for the other.
         # Through the environment, not interpolated into the script text —
-        # see "Write the vault secrets" for why that distinction matters.
+        # see "Write the service secrets" for why that distinction matters.
         env:
           PVE_SSH_PRIVATE_KEY: ${{ secrets.PVE_SSH_PRIVATE_KEY }}
           TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
@@ -158,7 +158,7 @@ jobs:
 
       - name: Write the deploy SSH key
         # Through the environment, not interpolated into the script text —
-        # see "Write the vault secrets" for why that distinction matters.
+        # see "Write the service secrets" for why that distinction matters.
         env:
           PVE_SSH_PRIVATE_KEY: ${{ secrets.PVE_SSH_PRIVATE_KEY }}
         run: |
@@ -175,7 +175,7 @@ jobs:
       # Proxmox API token.
       - name: Write the hypervisor secrets
         # Through the environment, not interpolated into the script text —
-        # see "Write the vault secrets" for why that distinction matters.
+        # see "Write the service secrets" for why that distinction matters.
         env:
           PVE_API_TOKEN_SECRET: ${{ secrets.PVE_API_TOKEN_SECRET }}
         run: |
@@ -299,8 +299,8 @@ jobs:
           "$ANSIBLE_PY" -m pip install --quiet 'proxmoxer>=2.3' requests
           "$ANSIBLE_PY" -c 'import proxmoxer; print("proxmoxer", proxmoxer.__version__)'
           ansible-galaxy collection install -r requirements.yml
-          # For the smoke test, which reads the switches to know which guests
-          # are meant to be up.
+          # For the secrets step, which reads this group's svc_secret_prefix
+          # out of its vars.yml and writes the secrets file back as YAML.
           pip install --quiet pyyaml
 
       - name: Join the tailnet
@@ -310,7 +310,7 @@ jobs:
         # own, which is a different scope from the non-ephemeral key a
         # permanent machine joins with. Don't reuse one for the other.
         # Through the environment, not interpolated into the script text —
-        # see "Write the vault secrets" for why that distinction matters.
+        # see "Write the service secrets" for why that distinction matters.
         env:
           PVE_SSH_PRIVATE_KEY: ${{ secrets.PVE_SSH_PRIVATE_KEY }}
           TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
@@ -340,7 +340,7 @@ jobs:
 
       - name: Write the deploy SSH key
         # Through the environment, not interpolated into the script text —
-        # see "Write the vault secrets" for why that distinction matters.
+        # see "Write the service secrets" for why that distinction matters.
         env:
           PVE_SSH_PRIVATE_KEY: ${{ secrets.PVE_SSH_PRIVATE_KEY }}
         run: |
@@ -353,110 +353,102 @@ jobs:
         run: |
           cp inventory/hosts.ini.example inventory/hosts.ini
 
-      # Scoped to the VAULT leg specifically, not merely to the guest job.
-      # Without the `if`, every guest matrix leg wrote the vault's credentials
-      # to disk — so adding a second service quietly handed it a copy of the
-      # vault's admin token and Cloudflare credential for the length of the run.
-      - name: Write the vault secrets
-        if: matrix.host == 'vault_host'
-        # Secrets come through the environment, never interpolated into the
-        # script text. GitHub substitutes ${{ secrets.X }} into the shell source
-        # BEFORE bash parses it, so a secret containing $ — an Argon2 hash, for
-        # instance — turns into shell variable expansions and arrives empty.
-        # That is not hypothetical: it silently truncated the vault's admin
-        # token to a 59-character fragment with every $-segment gone.
+      # Written straight before the playbook and scoped to just this matrix
+      # leg. Never committed; the real file is git-ignored.
+      #
+      # Generic on purpose: this step is the same for every service and does
+      # not name one. It takes each repo secret whose name starts with the
+      # group's own `svc_secret_prefix` and lowercases it into an Ansible var,
+      # so adding a service — or a secret to an existing one — needs no edit
+      # here. That is what makes the claim in site.yml true: a new service is a
+      # role, a play, an inventory group and a flag, and nothing in .github/.
+      #
+      # The whole secrets object reaches this step, where the old per-service
+      # steps each saw only their own. That is a deliberate trade for the
+      # genericity above, and it costs less than it looks: every guest leg
+      # already holds PVE_SSH_PRIVATE_KEY, which is root on every guest, so the
+      # blast radius was already shared. Only what is WRITTEN is narrowed, by
+      # the prefix filter below.
+      - name: Write the service secrets
+        # The whole secrets object, as JSON, through the environment. Two
+        # separate reasons it must not be interpolated into the script text:
+        #
+        #   * GitHub substitutes ${{ }} into the shell SOURCE before bash
+        #     parses it, so a secret containing $ — an Argon2 hash, for
+        #     instance — turns into shell variable expansions and arrives
+        #     mangled. Not hypothetical: it silently truncated the vault's
+        #     admin token to a 59-character fragment with every $-segment gone.
+        #   * A value containing a quote or a newline would close the string
+        #     and let the rest of the secret be parsed as script.
+        #
+        # Python reads it from os.environ, where it is opaque, and writes YAML
+        # with a real dumper rather than printf — so a secret containing a
+        # quote, a colon, a newline or a leading % lands correctly instead of
+        # producing a file that parses as something else.
         env:
-          SVC_VAULTWARDEN_ADMIN_TOKEN: ${{ secrets.SVC_VAULTWARDEN_ADMIN_TOKEN }}
-          SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN: ${{ secrets.SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN }}
-          SVC_VAULTWARDEN_TS_AUTHKEY: ${{ secrets.SVC_VAULTWARDEN_TS_AUTHKEY }}
+          ALL_SECRETS: ${{ toJSON(secrets) }}
         run: |
-          if [ -z "${SVC_VAULTWARDEN_ADMIN_TOKEN}" ]; then
-            echo "::error::SVC_VAULTWARDEN_ADMIN_TOKEN is not set — see docs/vault.md."
-            exit 1
-          fi
-          if [ -z "${SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN}" ]; then
-            echo "::error::SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN is not set. Caddy cannot obtain a certificate without it, and every Bitwarden client refuses a non-HTTPS server — see docs/vault.md."
-            exit 1
-          fi
-
           umask 077
-          # SVC_VAULTWARDEN_TS_AUTHKEY is deliberately NOT required. It is only needed to
-          # put the guest on the tailnet the first time; after that the
-          # tailscale role sees an existing join and skips it, so routine
-          # deploys run with the secret absent and empty is the correct value.
-          #
-          # It is also a DIFFERENT scope from TS_AUTHKEY above: this one must be
-          # non-ephemeral, because the vault is a permanent machine and an
-          # ephemeral key would make it delete itself the moment it disconnects.
-          # printf rather than a heredoc, so re-indenting this block later
-          # cannot change what lands in the file — heredoc bodies are literal,
-          # and YAML's indent stripping is not obvious enough to bet a secrets
-          # file on.
-          {
-            printf 'tailscale_authkey: "%s"\n'       "${SVC_VAULTWARDEN_TS_AUTHKEY}"
-            printf 'svc_vaultwarden_admin_token: "%s"\n' "${SVC_VAULTWARDEN_ADMIN_TOKEN}"
-            printf 'svc_vaultwarden_cloudflare_api_token: "%s"\n'    "${SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN}"
-          } > group_vars/vault_host/secrets.yml
+          GROUP="${{ matrix.host }}" python3 - <<'PYEOF'
+          import json, os, pathlib, yaml
+
+          group = os.environ["GROUP"]
+          gv = pathlib.Path("group_vars") / group
+
+          prefix = yaml.safe_load((gv / "vars.yml").read_text()).get("svc_secret_prefix")
+          if not prefix:
+              raise SystemExit(
+                  f"::error::group_vars/{group}/vars.yml has no svc_secret_prefix, so "
+                  "no secret can be matched to this service. Add one — see the vault's "
+                  "vars.yml for what it does."
+              )
+
+          out = {}
+          for name, value in json.loads(os.environ["ALL_SECRETS"]).items():
+              if not name.startswith(prefix):
+                  continue
+              # The tailscale role is shared by every guest, so it cannot have a
+              # per-service var name. Every other secret is the plain lowercase.
+              if name == prefix + "TS_AUTHKEY":
+                  out["tailscale_authkey"] = value
+              else:
+                  out[name.lower()] = value
+
+          # A near-empty file is correct on a routine deploy: the tailnet key is
+          # only needed at first join, and every genuinely required secret is
+          # asserted by the role itself, before it installs anything. The file
+          # must still EXIST, or the play fails on a missing vars file rather
+          # than on a missing secret — a much less obvious error.
+          (gv / "secrets.yml").write_text(yaml.safe_dump(out, default_flow_style=False))
+          print(f"wrote {len(out)} secret(s) matching {prefix}")
+          print("names:", ", ".join(sorted(out)) or "(none)")
+          PYEOF
 
       - name: Run playbook
         run: ansible-playbook site.yml --limit "${{ matrix.host }}"
 
-      - name: Smoke test — vault
-        if: matrix.host == 'vault_host'
+      # Every guest job ends in a real reachability check from off-box, never
+      # just "ansible reported ok" — this repo has shipped a false-green run
+      # that way before.
+      #
+      # Found by convention, not by a list: the service's own
+      # tests/<service>.sh. A new service drops a file in there and is covered,
+      # and nothing in this workflow ever learns its name.
+      - name: Smoke test
         run: |
-          FAILED=0
+          SERVICE="${{ matrix.host }}"
+          SERVICE="${SERVICE%_host}"
+          TEST="../tests/${SERVICE}.sh"
 
-          DOMAIN="vault.$(grep '^tailnet_base_domain:' group_vars/all/vars.yml \
-            | sed 's/^tailnet_base_domain:[[:space:]]*//; s/[[:space:]]*#.*$//')"
-
-          # The check a real client makes, from off-box, over the tailnet:
-          # MagicDNS resolves the name, Caddy answers with a certificate that
-          # verifies against the public trust store, and Vaultwarden is awake
-          # behind it. No -k anywhere — an unverifiable certificate is one of
-          # the two outages this is here to catch, so it has to fail.
-          if curl -fsS --max-time 30 "https://${DOMAIN}/alive" >/dev/null; then
-            echo "OK: ${DOMAIN} answers over verified HTTPS"
-          else
-            echo "::error::${DOMAIN}/alive did not answer over verified HTTPS — the vault is unreachable by every Bitwarden client"
-            FAILED=1
+          # A missing test is a failure, not a skip. The point of this step is
+          # that a guest cannot reach production uncovered, and falling through
+          # to exit 0 is exactly the false green it exists to prevent.
+          if [ ! -f "$TEST" ]; then
+            echo "::error::${SERVICE} has no tests/${SERVICE}.sh — a deploy job whose last step is ansible-playbook has proven only that Ansible reported ok. Add one; see tests/vault.sh."
+            exit 1
           fi
 
-          # Registration being open would let anything that reaches the tailnet
-          # create an account on the vault server.
-          #
-          # Read from the RUNNING container, not from /api/config: Vaultwarden
-          # stopped exposing the signups flag there, so the previous version of
-          # this check quietly degraded to a warning and verified nothing. A
-          # check that cannot fail is worse than no check, because it reads
-          # like coverage.
-          SIGNUPS=$(ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
-            ci-deploy@"${DOMAIN}" \
-            'sudo docker exec vaultwarden printenv SIGNUPS_ALLOWED' 2>/dev/null | tr -d '\r')
-          if [ "$SIGNUPS" = "false" ]; then
-            echo "OK: signups are closed"
-          else
-            echo "::error::SIGNUPS_ALLOWED is '${SIGNUPS:-unreadable}', expected 'false' — anyone on the tailnet can register on your vault"
-            FAILED=1
-          fi
-
-          # The self-heal timer is the only thing covering "running but not
-          # answering". If it is not armed, that failure mode is uncovered and
-          # nothing else in this job would notice.
-          # Straight to the tailnet name, not through the hypervisor. The
-          # inventory jumps via pve so a guest with a broken tailnet join is
-          # still fixable; a smoke test wants the opposite — if the vault is not
-          # reachable the way a client reaches it, that is a failure, not
-          # something to route around.
-          if ssh -i ~/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new \
-            ci-deploy@"${DOMAIN}" \
-            'systemctl is-active --quiet vaultwarden-healthcheck.timer'; then
-            echo "OK: self-heal timer is active"
-          else
-            echo "::error::vaultwarden-healthcheck.timer is not active — a wedged stack would never be restarted"
-            FAILED=1
-          fi
-
-          exit $FAILED
+          bash "$TEST"
 
       # Without this the runner just vanishes and headscale waits out
       # ephemeral.inactivity_timeout (30m) before reaping the node — which

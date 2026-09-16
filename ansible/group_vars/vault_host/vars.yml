@@ -19,6 +19,26 @@ vaultwarden_domain: "vault.{{ tailnet_base_domain }}"
 
 vaultwarden_dir: /opt/vaultwarden
 
+# Which GitHub Actions secrets belong to this guest.
+#
+# deploy.yml writes group_vars/<group>/secrets.yml by taking every repo secret
+# whose name starts with this prefix and lowercasing it into an Ansible var —
+# SVC_VAULTWARDEN_ADMIN_TOKEN becomes svc_vaultwarden_admin_token. That is why
+# the role's var names are the lowercase of the secret names, and why adding a
+# secret to this service needs no workflow edit: name it with the prefix and it
+# arrives.
+#
+# The prefix is the ROLE's name, not the service flag's — this group is
+# `vault_host` but the role is `svc_vaultwarden`, and the same mismatch is
+# normal (a `notes` service could run `svc_joplin`). Declared here because CI
+# cannot infer it, and declared ONLY here.
+#
+# The one secret that does not follow the rule is SVC_VAULTWARDEN_TS_AUTHKEY,
+# which becomes `tailscale_authkey` — the tailscale role is shared by every
+# guest, so it cannot have a per-service var name. deploy.yml special-cases
+# that one suffix.
+svc_secret_prefix: SVC_VAULTWARDEN_
+
 # <-- change this
 #
 # Where Let's Encrypt sends expiry warnings. A renewal that has been quietly

@@ -156,21 +156,12 @@ is not a backup:
 ssh ci-deploy@pve.ts.conway-hash.com 'sudo ls -la /tank/dump/'
 ```
 
-⚠️ This host also carries a hand-made, all-guests backup job (`sat 00:00` →
-`tank`, `keep-last 4`) that predates this repo and is **not** managed by it.
-Its original job was to cover the hand-made guests in the 100-range; now that
-none exist, the only live guest it still catches is the vault — which
-`pve_host` already backs up on the same schedule. So it now does nothing but
-take a second ~1.8G archive and a second snapshot freeze every Saturday.
-
-Removing it is a one-liner, and safe: the repo's own vault job is unaffected.
-There is deliberately no Ansible task for this, because the repo does not own
-jobs it did not create:
-
-```bash
-ssh ci-deploy@pve.ts.conway-hash.com \
-  'sudo pvesh delete /cluster/backup/backup-2731efbf-8ff9'
-```
+This host used to carry a second, hand-made all-guests job that predates this
+repo. It was there to cover the hand-made guests in the 100-range; once those
+were gone it did nothing but take a duplicate vault archive every Saturday, so
+it was removed. `pvesh get /cluster/backup` should now list exactly one job —
+the one `pve_host` writes. If a second ever appears, something created it
+outside this repo.
 
 Archives are `.vma.zst` (~1.8G). If you ever see a bare `.vma` (~4.9G), the
 job lost its `--compress` — see `pve_backup_compress` in

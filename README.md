@@ -150,6 +150,12 @@ ansible/
     ├── pve_kiosk/                         a service, on the hypervisor
     ├── tailscale/ common/ docker/         any machine
     └── svc_<name>/                        one self-contained role per service
+
+tests/
+└── <service>.sh              one smoke test per service, run from off-box
+                              after its deploy. Found by filename, so CI
+                              never names a service; a guest with no file
+                              here fails the deploy.
 ```
 
 Groups are named `<thing>_host` and machines `<thing>` — `pve_host`/`pve`,
@@ -158,35 +164,43 @@ ambiguous and Ansible only warns about it.
 
 ## Adding a service
 
-**To an existing guest**, six steps, and none of them touch a workflow
-file — CI derives its matrix from `site.yml`'s own `hosts:` lines crossed
-with the switches:
+Nothing below touches a workflow file. CI derives its matrix from
+`site.yml`'s own `hosts:` lines crossed with the switches, finds the secrets
+by prefix and the smoke test by filename — so `.github/` never learns a
+service's name.
 
 1. `roles/svc_<name>/` — self-contained: its own tasks, templates, and a
-   `defaults/main.yml` holding only secrets, each with an `assert`
+   `defaults/main.yml` holding only secrets, each with an `assert`. That
+   assert is the *only* place a secret is declared required; CI does not
+   keep a second list.
 2. A group in `inventory/hosts.ini`, named `<name>_host`
 3. A play in `site.yml`, gated on the flag
 4. A line in `group_vars/all/services.yml` — the name must match the group
    minus `_host`. CI fails loudly if a play has no matching flag, so a typo
    in either file cannot silently produce a service with no switch.
-5. `docs/<name>.md`, and a row in `docs/README.md`
-6. A `renovate:` comment **on the line immediately above** each version
+5. `group_vars/<name>_host/vars.yml`, including one `svc_secret_prefix:`
+   line. Every repo secret starting with that prefix is written into the
+   guest's `secrets.yml` as the lowercase of its own name —
+   `SVC_JOPLIN_DB_PASSWORD` becomes `svc_joplin_db_password`. Adding a
+   secret later is a GitHub secret with the right name and nothing else.
+6. `tests/<name>.sh` — the smoke test, run from off-box after the playbook.
+   **A guest with no test file fails the deploy**, deliberately: a job whose
+   last step is `ansible-playbook` has proven only that Ansible reported ok,
+   and this repo has shipped a false-green run that way before. Copy
+   `tests/vault.sh`; it documents the contract at the top.
+7. `docs/<name>.md`, and a row in `docs/README.md`
+8. A `renovate:` comment **on the line immediately above** each version
    var in that group's `vars.yml` — the `customManagers` entry in
    `renovate.json` already matches every `group_vars/*/vars.yml`, so no
    config change is needed. Anything in the gap between the comment and
    the var makes Renovate stop tracking it silently: no error, just a
    dependency that quietly never updates again.
 
-**On a new guest**, add an entry to `pve_guests:` in
+**On a new guest**, also add an entry to `pve_guests:` in
 `group_vars/pve_host/vars.yml` — name, vmid, cores, RAM, disk, address. It
 gets cloned from the cloud-init template the role builds once, so there is no
 image to fetch and no disk to import per service. That needs the Proxmox API
-token to exist (SETUP.md step 6); the workflows stay untouched.
-
-The one thing a new guest DOES require in a workflow: **its own smoke
-test** in `deploy.yml`. A deploy job whose last step is `ansible-playbook`
-has proven only that Ansible reported ok — this repo has shipped a
-false-green run that way before.
+token to exist (SETUP.md step 6).
 
 ## Two accounts, on purpose
 
