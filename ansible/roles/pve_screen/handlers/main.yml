@@ -3,15 +3,21 @@
 # play-global, so anything generic would collide silently.
 
 - name: Restart the screen session
-  # tty1 runs the browser from root's .bash_profile, so there is no unit to
-  # restart — killing cage drops the login shell back to the profile, which
-  # launches it again with whatever URL was just written.
-  ansible.builtin.command: pkill -x cage
-  register: pve_screen_pkill
-  # pkill exits 1 when nothing matched, which is the normal case on a first run
-  # or a box whose screen was never started.
-  failed_when: pve_screen_pkill.rc not in [0, 1]
-  changed_when: pve_screen_pkill.rc == 0
+  # Restart the GETTY, not the browser.
+  #
+  # `pkill cage` looks like the obvious move and is wrong: the launch line is
+  # `cage -- cog URL || btop`, so killing cage does not re-read anything — the
+  # shell simply falls through to the `|| btop` fallback and sits there. The
+  # screen ends up showing btop, the profile's new URL is never used, and
+  # nothing says so. Observed exactly that way on the first run of this role,
+  # with the old URL still on the glass and cage still alive.
+  #
+  # Restarting getty@tty1 ends the login session, so agetty respawns it,
+  # autologin runs .bash_profile again, and cage starts against whatever URL
+  # was just written.
+  ansible.builtin.systemd_service:
+    name: getty@tty1.service
+    state: restarted
 
 - name: Reload systemd after removing the kiosk
   ansible.builtin.systemd_service:
