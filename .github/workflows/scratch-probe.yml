@@ -6,9 +6,16 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - host: vault_host
+            secret_name: TS_AUTHKEY
     steps:
-      - name: Control — one named secret, no toJSON
+      - name: Index the secrets context with a matrix value
         env:
-          ONE_SECRET: ${{ secrets.TS_AUTHKEY }}
+          PICKED: ${{ secrets[matrix.secret_name] }}
         run: |
-          echo "control ran; secret is ${#ONE_SECRET} chars"
+          echo "host=${{ matrix.host }} secret_name=${{ matrix.secret_name }}"
+          echo "resolved to ${#PICKED} chars"
+          if [ "${#PICKED}" -gt 0 ]; then echo "DYNAMIC INDEXING WORKS"; else echo "resolved EMPTY"; fi
