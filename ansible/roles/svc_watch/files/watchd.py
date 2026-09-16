@@ -136,9 +136,11 @@ class Proxmox:
 
     Authentication is an API token, not a ticket: tokens do not expire, carry
     no CSRF requirement for the endpoints used here, and can be scoped to a
-    role. The one this runs as is PVEAuditor plus Sys.PowerMgmt — enough to
-    read everything and to power-cycle, and deliberately not enough to create,
-    delete or reconfigure anything.
+    role. The one this runs as can read guests, storage, tasks and pending
+    updates, and power-cycle — and deliberately nothing else. In particular it
+    does NOT hold Datastore.Allocate, which is what listing backup ARCHIVES
+    turns out to require and which also permits deleting them. See the backup
+    section of collect().
     """
 
     def __init__(self):
@@ -193,8 +195,13 @@ class Proxmox:
             f"/nodes/{PVE_NODE}/storage/{storage}/content?content=backup"
         ) or []
 
-    def tasks(self, limit=200):
-        return self.get(f"/nodes/{PVE_NODE}/tasks?limit={limit}&source=all") or []
+    def tasks(self, limit=100):
+        # typefilter, so the window is 100 BACKUP tasks rather than 100 tasks of
+        # any kind — on a busy node the vzdump entries would otherwise be pushed
+        # out by routine work within days.
+        return self.get(
+            f"/nodes/{PVE_NODE}/tasks?typefilter=vzdump&limit={limit}&source=all"
+        ) or []
 
     def pending_updates(self):
         return self.get(f"/nodes/{PVE_NODE}/apt/update") or []
@@ -318,9 +325,26 @@ def collect():
 
     # ── backups ──
     #
-    # Newest archive per guest, across every storage that can hold one. Asking
-    # the storage rather than the job means a backup taken by hand counts, and
-    # a job that exists but has never succeeded does not.
+    # Two sources, because neither is sufficient alone.
+    #
+    # ARCHIVES are ground truth: an archive that exists is one you can restore
+    # from. But listing backup volumes requires Datastore.Allocate, which also
+    # permits DELETING volumes and removing storage configuration. Measured, not
+    # assumed: with Datastore.Audit the listing returns an empty array and no
+    # error, and only Datastore.Allocate populates it. Handing a monitoring
+    # service the ability to delete the backups it watches is exactly backwards,
+    # so the token does not have it and this list is normally empty.
+    #
+    # TASKS are what we actually get: the vzdump task log needs only Sys.Audit
+    # and says when a backup last completed, and whether it succeeded.
+    #
+    # ⚠️ The task log is keyed by vmid, and vmids get RECYCLED. A guest created
+    # on a vmid that a destroyed guest used to hold inherits its predecessor's
+    # backup history — which reads as "recently backed up" for a machine that
+    # has never been backed up at all. That is a false negative on the alert
+    # that matters most, and it resolves itself only once the new guest's first
+    # real backup runs. Archives do not have this problem, which is why they are
+    # preferred whenever they are visible.
     newest = {}
     for store in backup_stores:
         for vol in attempt(f"backups/{store}", lambda s=store: PVE.backups(s), []):
@@ -337,27 +361,43 @@ def collect():
                 }
     state["backups"] = {str(k): v for k, v in newest.items()}
 
-    # ── recent vzdump outcomes ──
+    # ── vzdump outcomes ──
     #
-    # A stale archive and a FAILED job are different problems: the first says
-    # nothing ran, the second says something ran and broke. Reporting only age
-    # would let a job that fails every week look merely old.
-    vzdump = {}
-    tasks = attempt("tasks", PVE.tasks, [])
-    for t in tasks:
-        if t.get("type") != "vzdump" or not t.get("endtime"):
+    # Newest SUCCESS and newest ATTEMPT are tracked separately. A stale archive
+    # and a failed job are different problems: the first says nothing ran, the
+    # second says something ran and broke. Collapsing them would let a job that
+    # fails every week look merely old.
+    success, attempt_ = {}, {}
+    for t in attempt("tasks", PVE.tasks, []):
+        if not t.get("endtime"):
             continue
-        vmid = t.get("id", "").split("@")[0]
+        vmid = (t.get("id") or "").split("@")[0]
         if not vmid.isdigit():
             continue
         vmid = int(vmid)
-        if t["endtime"] > vzdump.get(vmid, {}).get("endtime", 0):
-            vzdump[vmid] = {
-                "endtime": t["endtime"],
-                "status": t.get("status") or "",
-                "ok": (t.get("status") or "").upper() == "OK",
-            }
-    state["vzdump"] = {str(k): v for k, v in vzdump.items()}
+        ok = (t.get("status") or "").upper() == "OK"
+        rec = {"endtime": t["endtime"], "status": t.get("status") or "", "ok": ok}
+        if t["endtime"] > attempt_.get(vmid, {}).get("endtime", 0):
+            attempt_[vmid] = rec
+        if ok and t["endtime"] > success.get(vmid, {}).get("endtime", 0):
+            success[vmid] = rec
+    state["vzdump"] = {str(k): v for k, v in attempt_.items()}
+
+    # ── when each guest was last backed up ──
+    #
+    # One answer per guest, with the source named, so the dashboard and the
+    # alert cannot disagree about which evidence they are quoting.
+    last = {}
+    for g in guests:
+        vmid = g["vmid"]
+        arc = newest.get(vmid)
+        suc = success.get(vmid)
+        if arc:
+            last[str(vmid)] = {"t": arc["ctime"], "source": "archive",
+                               "storage": arc["storage"], "size": arc["size"]}
+        elif suc:
+            last[str(vmid)] = {"t": suc["endtime"], "source": "task"}
+    state["backup_last"] = last
 
     # ── pending updates ──
     updates = attempt("updates", PVE.pending_updates, [])
@@ -437,8 +477,14 @@ def evaluate(state):
                 f"VM {vmid} ({name}) is not running.",
             ))
 
-        b = state["backups"].get(str(vmid))
-        age = _age_hours(b["ctime"]) if b else None
+        b = state["backup_last"].get(str(vmid))
+        age = _age_hours(b["t"]) if b else None
+        # Where the evidence came from, said out loud — an archive is proof you
+        # can restore, a task is only proof something once reported success.
+        via = ""
+        if b:
+            via = (f"Newest archive on {b['storage']}" if b["source"] == "archive"
+                   else "Last successful vzdump task")
         if b is None:
             # Only worth saying for a guest that is up. A machine that does not
             # exist yet having no backup is not news.
@@ -446,25 +492,29 @@ def evaluate(state):
                 out.append((
                     f"backup_missing:{vmid}", "warn",
                     f"{name} has never been backed up",
-                    f"No archive for VM {vmid} on any backup storage.",
+                    f"No successful vzdump for VM {vmid}, and no archive "
+                    f"visible on any backup storage.",
                 ))
         elif age > BACKUP_BAD_HOURS:
             out.append((
                 f"backup_stale:{vmid}", "critical",
                 f"{name}'s backup is {age / 24:.0f} days old",
-                f"Newest archive on {b['storage']} is {age / 24:.1f} days old. "
-                f"That is two missed runs or more.",
+                f"{via} is {age / 24:.1f} days old. That is two missed runs "
+                f"or more.",
             ))
         elif age > BACKUP_WARN_HOURS:
             out.append((
                 f"backup_stale:{vmid}", "warn",
                 f"{name}'s backup is {age / 24:.0f} days old",
-                f"Newest archive on {b['storage']} is {age / 24:.1f} days old — "
-                f"the weekly job looks like it missed its slot.",
+                f"{via} is {age / 24:.1f} days old — the weekly job looks like "
+                f"it missed its slot.",
             ))
 
+        # A failure only counts if it is the most recent thing that happened.
+        # An old failure followed by a success is history, not a problem — and
+        # without the comparison a single bad night would alert forever.
         z = state["vzdump"].get(str(vmid))
-        if z and not z["ok"]:
+        if z and not z["ok"] and (b is None or z["endtime"] >= b["t"]):
             out.append((
                 f"backup_failed:{vmid}", "critical",
                 f"{name}'s last backup FAILED",

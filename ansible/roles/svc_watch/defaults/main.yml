@@ -17,6 +17,10 @@
 # and nothing else:
 #
 #   pveum role add Watch -privs "VM.Audit Datastore.Audit Sys.Audit Sys.Modify Sys.PowerMgmt"
+#
+# ⚠️ Datastore.Allocate is deliberately NOT in that list. It is what listing
+# backup ARCHIVES requires, and it also permits deleting volumes — see
+# docs/watch.md on where "last backed up" comes from.
 #   pveum user add watch@pve
 #   pveum acl modify / --user watch@pve --role Watch
 #   pveum user token add watch@pve watchd --privsep 0

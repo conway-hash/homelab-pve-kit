@@ -34,9 +34,9 @@ and none of it is in an alert.
 | Alert | Fires when |
 |---|---|
 | `guest_down` | a guest is not running (silence one with `watch_ignore_guests`) |
-| `backup_stale` | newest archive older than 8 days (warn) / 15 days (critical) |
-| `backup_missing` | a running guest has no archive anywhere |
-| `backup_failed` | the most recent `vzdump` task for a guest did not end `OK` |
+| `backup_stale` | last backup older than 8 days (warn) / 15 days (critical) |
+| `backup_missing` | a running guest has no successful backup on record |
+| `backup_failed` | the most recent `vzdump` for a guest did not end `OK`, and nothing has succeeded since |
 | `storage_full` | any storage over 80% (warn) / 90% (critical) |
 | `service_failed` | a Proxmox service is not running |
 | `kernel_update` | a kernel is pending — needs a reboot, so it is a decision |
@@ -48,6 +48,32 @@ The backup thresholds **must** track the schedule in
 `group_vars/pve_host/vars.yml`. They were 36h/72h when backups ran nightly; on
 the current weekly job every guest would have sat permanently red, which is an
 alarm that means nothing.
+
+### Where "last backed up" comes from
+
+Two sources, preferred in this order, and the dashboard says which one answered.
+
+**Archives** are ground truth: an archive that exists is one you can restore
+from. But listing backup volumes turns out to require `Datastore.Allocate` —
+measured, not assumed: with `Datastore.Audit` the API returns an empty array
+and **no error**, and only `Datastore.Allocate` populates it. That privilege
+also permits *deleting* volumes and removing storage configuration. Handing a
+monitoring service the ability to delete the backups it watches is exactly
+backwards, so the token does not have it and this source is normally empty.
+
+**The vzdump task log** is what actually answers, and needs only `Sys.Audit`.
+It records when a backup last completed and whether it succeeded.
+
+⚠️ **The task log is keyed by vmid, and vmids get recycled.** A guest created on
+a vmid a destroyed guest used to hold inherits its predecessor's backup
+history, which reads as "recently backed up" for a machine that has never been
+backed up at all. It corrects itself as soon as the new guest's first real
+backup runs — at worst one weekly cycle — but during that window this is a
+false negative on the alert that matters most.
+
+If you ever decide the archive listing is worth `Datastore.Allocate`, nothing
+in `watchd` needs changing: it already prefers archives whenever they are
+visible, and the recycled-vmid problem disappears with them.
 
 ### The certificate alert is not a calendar reminder
 
@@ -114,7 +140,7 @@ pveum user token add watch@pve watchd --privsep 0
 | Privilege | What it is for |
 |---|---|
 | `VM.Audit` | read guest status and config |
-| `Datastore.Audit` | read storage usage and list backup archives |
+| `Datastore.Audit` | read storage usage |
 | `Sys.Audit` | node status, services, task log |
 | `Sys.Modify` | read pending apt updates |
 | `Sys.PowerMgmt` | reboot the node — drop it if you leave controls off |

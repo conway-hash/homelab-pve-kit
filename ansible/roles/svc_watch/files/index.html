@@ -228,8 +228,12 @@ function render(d) {
           `up ${dur(s.host.uptime)} · ${esc(s.host.kernel?.release || "")}`);
 
   $("guests").innerHTML = (s.guests || []).map(g => {
-    const b = (s.backups || {})[String(g.vmid)];
-    const age = b ? ((Date.now() / 1000 - b.ctime) / 86400) : null;
+    // backup_last, not backups: archives need a privilege this token
+    // deliberately does not hold, so the authoritative source is usually the
+    // vzdump task log. Which one answered is shown, because an archive proves
+    // you can restore and a task only proves something reported success.
+    const b = (s.backup_last || {})[String(g.vmid)];
+    const age = b ? ((Date.now() / 1000 - b.t) / 86400) : null;
     return `<div class="card">
       <div class="row"><span class="name">${esc(g.name)}</span>
         <span class="muted num">${g.vmid}</span><span class="spacer"></span>
@@ -237,7 +241,8 @@ function render(d) {
       <div class="muted" style="margin-top:6px">
         cpu ${g.cpu.toFixed(1)}% · mem ${g.memory.pct}% (${bytes(g.memory.used)})
         · up ${dur(g.uptime)}</div>
-      <div class="muted">backup ${age === null ? "— none" : age.toFixed(1) + " days old"}</div>
+      <div class="muted">backup ${age === null ? "— none" :
+        age.toFixed(1) + " days old (" + esc(b.source) + ")"}</div>
       <div class="bar"><i class="${cls(g.memory.pct)}" style="width:${g.memory.pct}%"></i></div>
     </div>`;
   }).join("") || `<div class="card muted">No guests.</div>`;
