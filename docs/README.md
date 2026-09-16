@@ -72,8 +72,8 @@ sense it can reverse.
 
 See **Adding a service** in the [root README](../README.md). The short
 version: a role, a play, an inventory group, a line in `services.yml` whose
-name matches the group minus `_host`, an `svc_secret_prefix:` in the group's
-`vars.yml`, and a `tests/<name>.sh`.
+name matches the group minus `_host`, a GitHub Environment called `<name>`
+holding a `SERVICE_SECRETS` bundle, and a `tests/<name>.sh`.
 
 None of it touches `.github/`. CI finds the guest from `site.yml`, its secrets
 from the prefix and its smoke test from the filename, so there is no workflow

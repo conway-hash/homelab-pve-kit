@@ -105,22 +105,41 @@ $EDITOR group_vars/vault_host/secrets.yml
 
 ### For CI
 
-Every service secret is named `SVC_<SERVICE>_<THING>`, matching the
-`svc_<service>_` prefix on its Ansible variable. Two things fall out of that:
-you can tell at a glance which secrets belong to a service (and delete exactly
-those when you retire it), and the next service wanting a Caddy gets its **own**
-Cloudflare token rather than a share of this one. Same zone, same permissions —
-but revoking one does not take the others down with it, and the audit log says
-which service did what.
+CI secrets live in a **GitHub Environment named after the service** — here,
+`vault` — under Settings → Environments. The environment holds exactly one
+secret, `SERVICE_SECRETS`, whose value is this service's entire `secrets.yml`:
 
-Secrets without that prefix (`PVE_*`, `TS_AUTHKEY`) are infrastructure and
-outlive any single service.
+```yaml
+svc_vaultwarden_admin_token: "$argon2id$v=19$m=65540,t=3,p=4$..."
+svc_vaultwarden_cloudflare_api_token: "..."
+# First run only. Once the guest has joined, the tailscale role skips it and
+# this line can go.
+tailscale_authkey: "..."
+```
 
-| Secret | What |
-|---|---|
-| `SVC_VAULTWARDEN_ADMIN_TOKEN` | the Argon2 hash from step 1 |
-| `SVC_VAULTWARDEN_CLOUDFLARE_API_TOKEN` | the token from step 2 |
-| `SVC_VAULTWARDEN_TS_AUTHKEY` | the key from step 3 — first run only; once joined, the role skips it |
+Paste it as-is; `deploy.yml` parses it and writes it to
+`group_vars/vault_host/secrets.yml` on the runner. It is the same file you
+would write by hand for a local run, which is the point — one format, both
+paths.
+
+Every service does this under the same secret name, which is what lets one
+generic step in `deploy.yml` serve all of them without naming any. It is also
+the tighter scoping: **environment secrets are only handed to a job that
+declares that environment**, so the vault's credentials are never sent to
+another service's deploy at all.
+
+One bundle per service, not one shared bundle: the next service wanting a
+Caddy gets its **own** Cloudflare token rather than a share of this one. Same
+zone, same permissions — but revoking one does not take the others down with
+it, and the audit log says which service did what.
+
+Repo-level secrets (`PVE_*`, `TS_AUTHKEY`) stay where they are. They are
+infrastructure, shared by every job, and outlive any single service.
+
+⚠️ Rotating one value means editing the bundle, not replacing a standalone
+secret — the cost of a workflow that does not enumerate secret names. See
+`deploy.yml`'s "Write the service secrets" step for why enumerating them is
+not available.
 
 ## Turning it on
 

@@ -178,11 +178,12 @@ service's name.
 4. A line in `group_vars/all/services.yml` — the name must match the group
    minus `_host`. CI fails loudly if a play has no matching flag, so a typo
    in either file cannot silently produce a service with no switch.
-5. `group_vars/<name>_host/vars.yml`, including one `svc_secret_prefix:`
-   line. Every repo secret starting with that prefix is written into the
-   guest's `secrets.yml` as the lowercase of its own name —
-   `SVC_JOPLIN_DB_PASSWORD` becomes `svc_joplin_db_password`. Adding a
-   secret later is a GitHub secret with the right name and nothing else.
+5. A **GitHub Environment** named exactly `<name>`, holding one secret
+   called `SERVICE_SECRETS` — that service's whole `secrets.yml`, as YAML.
+   Every service stores its secrets under that same name, which is what lets
+   `deploy.yml` fetch them without ever knowing a service exists. Environment
+   secrets only reach a job that declares that environment, so one service's
+   credentials are never sent to another's.
 6. `tests/<name>.sh` — the smoke test, run from off-box after the playbook.
    **A guest with no test file fails the deploy**, deliberately: a job whose
    last step is `ansible-playbook` has proven only that Ansible reported ok,

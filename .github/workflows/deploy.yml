@@ -70,18 +70,20 @@ jobs:
                       f"services.yml has no '{name}' entry. Add one, or the "
                       f"service has no switch."
                   )
-              (guests if flags[name] else skipped).append(group)
+              # Both halves travel together: `host` is the inventory group to
+              # --limit to, `service` is the GitHub Environment holding that
+              # service's secrets. Deriving the second in the deploy job would
+              # mean the same `_host` convention implemented in two languages.
+              (guests if flags[name] else skipped).append(
+                  {"host": group, "service": name}
+              )
 
-          for group in skipped:
-              print(f"::notice::skipping {group} — switched off in services.yml", file=sys.stderr)
-          print("Guests to deploy:", guests, file=sys.stderr)
+          for entry in skipped:
+              print(f"::notice::skipping {entry['host']} — switched off in services.yml", file=sys.stderr)
+          print("Guests to deploy:", [g["host"] for g in guests], file=sys.stderr)
           print(f"guests={json.dumps(guests, separators=(',', ':'))}")
           PY
 
-  # The hypervisor first, on its own, because it is what CREATES the guests.
-  # This used to be guaranteed by a separate tofu-apply job; when that went
-  # away the guest legs started racing the job that builds them, and a guest
-  # play would fail as UNREACHABLE against a VM that did not exist yet.
   # The hypervisor first, on its own, because it is what CREATES the guests.
   # That ordering used to come free from a separate tofu-apply job; when that
   # went away the guest legs started racing the job that builds them, and a
@@ -270,7 +272,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        host: ${{ fromJson(needs.groups.outputs.guests) }}
+        include: ${{ fromJson(needs.groups.outputs.guests) }}
+
+    # The GitHub Environment named after this service — `vault`, and one per
+    # service after it. This is what makes the secrets step below generic: an
+    # Environment holds its own secrets, so every service can store one under
+    # the SAME name and the workflow never enumerates a service's secrets, or
+    # even learns its name.
+    #
+    # It is also the tighter scoping. Environment secrets are only handed to a
+    # job that declares that environment, so the vault's credentials are not
+    # merely unused by another service's leg — they are never sent to it.
+    #
+    # An Environment can also carry protection rules (required reviewers, a
+    # branch filter) if a service ever wants a human between a merge and its
+    # deploy. Nothing here uses that yet.
+    environment: ${{ matrix.service }}
+
     defaults:
       run:
         working-directory: ansible
@@ -299,8 +317,8 @@ jobs:
           "$ANSIBLE_PY" -m pip install --quiet 'proxmoxer>=2.3' requests
           "$ANSIBLE_PY" -c 'import proxmoxer; print("proxmoxer", proxmoxer.__version__)'
           ansible-galaxy collection install -r requirements.yml
-          # For the secrets step, which reads this group's svc_secret_prefix
-          # out of its vars.yml and writes the secrets file back as YAML.
+          # For the secrets step, which parses this service's SERVICE_SECRETS
+          # bundle and writes it back out as the group's secrets.yml.
           pip install --quiet pyyaml
 
       - name: Join the tailnet
@@ -356,72 +374,74 @@ jobs:
       # Written straight before the playbook and scoped to just this matrix
       # leg. Never committed; the real file is git-ignored.
       #
-      # Generic on purpose: this step is the same for every service and does
-      # not name one. It takes each repo secret whose name starts with the
-      # group's own `svc_secret_prefix` and lowercases it into an Ansible var,
-      # so adding a service — or a secret to an existing one — needs no edit
-      # here. That is what makes the claim in site.yml true: a new service is a
-      # role, a play, an inventory group and a flag, and nothing in .github/.
+      # Generic on purpose: this step is identical for every service and never
+      # names one. The GitHub Environment declared on this job IS the service,
+      # so `secrets.SERVICE_SECRETS` resolves to that service's own bundle —
+      # one secret holding its whole secrets.yml. Adding a service means
+      # creating an Environment and pasting its secrets in; nothing in
+      # .github/ changes, ever. That is what finally makes site.yml's
+      # long-standing claim true.
       #
-      # The whole secrets object reaches this step, where the old per-service
-      # steps each saw only their own. That is a deliberate trade for the
-      # genericity above, and it costs less than it looks: every guest leg
-      # already holds PVE_SSH_PRIVATE_KEY, which is root on every guest, so the
-      # blast radius was already shared. Only what is WRITTEN is narrowed, by
-      # the prefix filter below.
+      # Why a bundle rather than one GitHub secret per value, which would read
+      # more naturally: a workflow cannot enumerate secrets. `toJSON(secrets)`
+      # is the documented way to try, and this repo tried it — the platform
+      # refuses to schedule ANY run whose workflow mentions it, with a bare
+      # `action_required` and no jobs, no logs and no explanation. An isolated
+      # probe confirmed it: the same workflow with one named secret ran in 9s.
+      # Every other approach needs the secret NAMES in the YAML, which is the
+      # per-service boilerplate this exists to remove. Bundling is the price of
+      # a workflow that does not know what a service is called.
       - name: Write the service secrets
-        # The whole secrets object, as JSON, through the environment. Two
-        # separate reasons it must not be interpolated into the script text:
-        #
-        #   * GitHub substitutes ${{ }} into the shell SOURCE before bash
-        #     parses it, so a secret containing $ — an Argon2 hash, for
-        #     instance — turns into shell variable expansions and arrives
-        #     mangled. Not hypothetical: it silently truncated the vault's
-        #     admin token to a 59-character fragment with every $-segment gone.
-        #   * A value containing a quote or a newline would close the string
-        #     and let the rest of the secret be parsed as script.
-        #
-        # Python reads it from os.environ, where it is opaque, and writes YAML
-        # with a real dumper rather than printf — so a secret containing a
-        # quote, a colon, a newline or a leading % lands correctly instead of
-        # producing a file that parses as something else.
+        # Through the environment, never interpolated into the script text.
+        # GitHub substitutes ${{ }} into the shell SOURCE before bash parses
+        # it, so a secret containing $ — an Argon2 hash, for instance — turns
+        # into shell variable expansions and arrives mangled. Not
+        # hypothetical: it silently truncated the vault's admin token to a
+        # 59-character fragment with every $-segment gone.
         env:
-          ALL_SECRETS: ${{ toJSON(secrets) }}
+          SERVICE_SECRETS: ${{ secrets.SERVICE_SECRETS }}
         run: |
           umask 077
-          GROUP="${{ matrix.host }}" python3 - <<'PYEOF'
-          import json, os, pathlib, yaml
+          GROUP="${{ matrix.host }}" SERVICE="${{ matrix.service }}" python3 - <<'PYEOF'
+          import os, pathlib, sys, yaml
 
-          group = os.environ["GROUP"]
-          gv = pathlib.Path("group_vars") / group
+          group, service = os.environ["GROUP"], os.environ["SERVICE"]
+          raw = os.environ.get("SERVICE_SECRETS", "")
 
-          prefix = yaml.safe_load((gv / "vars.yml").read_text()).get("svc_secret_prefix")
-          if not prefix:
-              raise SystemExit(
-                  f"::error::group_vars/{group}/vars.yml has no svc_secret_prefix, so "
-                  "no secret can be matched to this service. Add one — see the vault's "
-                  "vars.yml for what it does."
+          if not raw.strip():
+              sys.exit(
+                  f"::error::the '{service}' Environment has no SERVICE_SECRETS. "
+                  f"It holds that service's whole secrets.yml as YAML — see "
+                  f"docs/{service}.md. Add it under Settings -> Environments -> "
+                  f"{service}."
               )
 
-          out = {}
-          for name, value in json.loads(os.environ["ALL_SECRETS"]).items():
-              if not name.startswith(prefix):
-                  continue
-              # The tailscale role is shared by every guest, so it cannot have a
-              # per-service var name. Every other secret is the plain lowercase.
-              if name == prefix + "TS_AUTHKEY":
-                  out["tailscale_authkey"] = value
-              else:
-                  out[name.lower()] = value
+          # Parsed rather than copied through, so a malformed bundle fails HERE,
+          # naming the Environment, instead of ten lines into a play as an
+          # unhelpful "vars file is not a dictionary".
+          try:
+              parsed = yaml.safe_load(raw)
+          except yaml.YAMLError as exc:
+              sys.exit(f"::error::the '{service}' Environment's SERVICE_SECRETS is not valid YAML: {exc}")
 
-          # A near-empty file is correct on a routine deploy: the tailnet key is
-          # only needed at first join, and every genuinely required secret is
-          # asserted by the role itself, before it installs anything. The file
-          # must still EXIST, or the play fails on a missing vars file rather
-          # than on a missing secret — a much less obvious error.
-          (gv / "secrets.yml").write_text(yaml.safe_dump(out, default_flow_style=False))
-          print(f"wrote {len(out)} secret(s) matching {prefix}")
-          print("names:", ", ".join(sorted(out)) or "(none)")
+          if not isinstance(parsed, dict):
+              sys.exit(
+                  f"::error::the '{service}' Environment's SERVICE_SECRETS parsed as "
+                  f"{type(parsed).__name__}, not a mapping. It must be `key: value` "
+                  f"lines — exactly what group_vars/{group}/secrets.yml would contain."
+              )
+
+          # Re-dumped rather than written verbatim: safe_dump quotes whatever
+          # needs quoting, so a value carrying a colon, a quote, a newline or a
+          # leading % lands as itself rather than as YAML meaning something
+          # else. It also normalises however the bundle happened to be pasted.
+          gv = pathlib.Path("group_vars") / group
+          (gv / "secrets.yml").write_text(yaml.safe_dump(parsed, default_flow_style=False))
+
+          # Names only. Never a value, and never a length — a length is a real
+          # hint to anything trying to guess one.
+          print(f"wrote {len(parsed)} secret(s) for '{service}'")
+          print("keys:", ", ".join(sorted(parsed)))
           PYEOF
 
       - name: Run playbook
