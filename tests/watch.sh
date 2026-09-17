@@ -92,14 +92,16 @@ fi
 
 # And the page itself is the kiosk, proxied. If this stops being true the
 # dashboard silently becomes something else.
-# Captured, not piped into `grep -q`.
+# Bash string matching, not a pipe into `grep -q`.
 #
-# grep -q exits the moment it matches, which closes the pipe under curl — curl
-# then dies with EPIPE and exit 23 while having done nothing wrong. The `if`
-# reads that as a failure, so the check fails precisely BECAUSE the page it is
-# looking for was found. Buffering the body first removes the race entirely.
+# These scripts run under `set -o pipefail`, and `grep -q` exits the instant it
+# matches — which closes the pipe under whatever is feeding it. That writer
+# then dies with EPIPE, pipefail promotes it to the pipeline's status, and the
+# check reports failure BECAUSE the thing it was looking for was found. It bit
+# curl first and then printf after curl was moved out of the pipe, which is the
+# tell that the pipe itself was the problem rather than either writer.
 PAGE=$(curl -fsS --max-time 20 "https://${DOMAIN}/" || true)
-if printf '%s' "$PAGE" | grep -q 'id="tnwrap"'; then
+if [[ "$PAGE" == *'id="tnwrap"'* ]]; then
   echo "OK: the dashboard is the kiosk page"
 else
   echo "::error::https://${DOMAIN}/ is not serving the kiosk page — the proxy to the hypervisor is broken"
@@ -111,7 +113,7 @@ fi
 if ! PORTS=$($SSH ci-deploy@"${DOMAIN}" 'sudo docker port watch-caddy' 2>&1); then
   echo "::error::could not read watch-caddy's published ports (${PORTS}) — cannot prove 443 is tailnet-only"
   FAILED=1
-elif printf '%s' "$PORTS" | grep -q '0\.0\.0\.0:443'; then
+elif [[ "$PORTS" == *"0.0.0.0:443"* ]]; then
   echo "::error::watch-caddy publishes 443 on 0.0.0.0 — the dashboard AND its reboot controls are exposed to the whole LAN"
   FAILED=1
 else

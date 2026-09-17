@@ -43,7 +43,8 @@ SSH="ssh -i $HOME/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new"
 # with a certificate that verifies against the public trust store, and ntfy is
 # awake behind it. No -k anywhere — the app refuses a certificate it cannot
 # verify, so an unverifiable one has to fail here too.
-if curl_warm "https://${DOMAIN}/v1/health" | grep -q '"healthy":true'; then
+HEALTH=$(curl_warm "https://${DOMAIN}/v1/health" || true)
+if [[ "$HEALTH" == *'"healthy":true'* ]]; then
   echo "OK: ${DOMAIN} answers over verified HTTPS"
 else
   echo "::error::${DOMAIN}/v1/health did not report healthy over verified HTTPS — no alert from any service can be delivered"
@@ -83,7 +84,7 @@ fi
 if ! PORTS=$($SSH ci-deploy@"${DOMAIN}" 'sudo docker port ntfy-caddy' 2>&1); then
   echo "::error::could not read ntfy-caddy's published ports (${PORTS}) — cannot prove 443 is tailnet-only"
   FAILED=1
-elif printf '%s' "$PORTS" | grep -q '0\.0\.0\.0:443'; then
+elif [[ "$PORTS" == *"0.0.0.0:443"* ]]; then
   echo "::error::ntfy-caddy publishes 443 on 0.0.0.0 — the notification server is exposed to the whole LAN"
   FAILED=1
 else

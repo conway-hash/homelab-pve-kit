@@ -92,7 +92,7 @@ fi
 if ! PORTS=$($SSH ci-deploy@"${DOMAIN}" 'sudo docker port vaultwarden-caddy' 2>&1); then
   echo "::error::could not read vaultwarden-caddy's published ports (${PORTS}) — cannot prove 443 is tailnet-only"
   FAILED=1
-elif printf '%s' "$PORTS" | grep -q '0\.0\.0\.0:443'; then
+elif [[ "$PORTS" == *"0.0.0.0:443"* ]]; then
   echo "::error::vaultwarden-caddy publishes 443 on 0.0.0.0 — the vault is exposed to the whole LAN, not just the tailnet"
   FAILED=1
 else
