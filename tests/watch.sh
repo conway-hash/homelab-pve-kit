@@ -92,7 +92,14 @@ fi
 
 # And the page itself is the kiosk, proxied. If this stops being true the
 # dashboard silently becomes something else.
-if curl -fsS --max-time 20 "https://${DOMAIN}/" | grep -q 'id="tnwrap"'; then
+# Captured, not piped into `grep -q`.
+#
+# grep -q exits the moment it matches, which closes the pipe under curl — curl
+# then dies with EPIPE and exit 23 while having done nothing wrong. The `if`
+# reads that as a failure, so the check fails precisely BECAUSE the page it is
+# looking for was found. Buffering the body first removes the race entirely.
+PAGE=$(curl -fsS --max-time 20 "https://${DOMAIN}/" || true)
+if printf '%s' "$PAGE" | grep -q 'id="tnwrap"'; then
   echo "OK: the dashboard is the kiosk page"
 else
   echo "::error::https://${DOMAIN}/ is not serving the kiosk page — the proxy to the hypervisor is broken"
