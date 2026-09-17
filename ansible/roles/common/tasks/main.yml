@@ -101,3 +101,33 @@
     owner: root
     group: root
     mode: "0644"
+
+# ── Prefer IPv4 while there is no IPv6 route ─────────────────────────
+#
+# These guests get a global IPv6 address from the router's advertisements —
+# a ULA, fd63:…/64 — and no IPv6 DEFAULT ROUTE to go with it. glibc reads
+# "has a global v6 address" as "v6 works", so getaddrinfo puts AAAA first for
+# any name that has one, and the connection fails immediately with
+# ENETUNREACH. Errno 101.
+#
+# It is intermittent in the worst way: whether it happens depends on whether
+# that particular name returns AAAA at that moment. download.docker.com and
+# pkgs.tailscale.com are behind CDNs that sometimes do and sometimes do not, so
+# the same playbook fails on a different task each run and passes in between —
+# which reads like a flaky network rather than a deterministic misconfiguration.
+# It cost three deploys before the errno was read carefully.
+#
+# The narrow fix is to flip the precedence rule glibc ships, so mapped IPv4
+# outranks native IPv6. Nothing else changes: IPv6 still works the moment a
+# route exists, and this line becomes a no-op rather than an obstacle.
+- name: Prefer IPv4 in getaddrinfo while these guests have no IPv6 route
+  ansible.builtin.lineinfile:
+    path: /etc/gai.conf
+    # The value from RFC 6724's own table, with IPv4 raised above IPv6 —
+    # not a made-up number.
+    line: "precedence ::ffff:0:0/96  100"
+    regexp: '^\s*precedence\s+::ffff:0:0/96'
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
