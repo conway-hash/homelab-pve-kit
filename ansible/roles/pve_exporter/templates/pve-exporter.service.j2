@@ -1,0 +1,38 @@
+# Managed by Ansible (pve_exporter) — edits will be overwritten.
+
+[Unit]
+Description=Hypervisor-local metrics the Proxmox API cannot answer for
+# tailscaled, because the socket binds to this host's tailnet address and
+# `tailscale status` is one of the things being collected. Without the
+# interface up there is no address to bind to and the unit fails on start.
+After=network-online.target tailscaled.service pve-guests.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 {{ exporter_dir }}/exporterd.py
+EnvironmentFile={{ exporter_dir }}/exporter.env
+Restart=always
+RestartSec=10
+
+# Runs as root, and only for two reasons: `qm guest exec` talks to the QEMU
+# monitor socket, and `tailscale status` needs its own socket. Everything else
+# it reads — /proc, /sys, lspci — is world-readable.
+#
+# So the hardening below is about limiting what root can reach FROM here,
+# since the process genuinely needs the identity but almost none of its powers.
+User=root
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+# It writes nothing at all. Not "writes little" — nothing.
+ReadWritePaths=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

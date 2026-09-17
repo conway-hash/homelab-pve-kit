@@ -44,7 +44,7 @@ body{background:radial-gradient(1200px 640px at 78% -16%,#131e2c 0%,transparent 
      grid-template-rows:auto minmax(0,1fr) minmax(0,1fr);
      grid-template-areas:
        "top top  top   top"
-       "sys vms  logs  bkp"
+       "sys vms  tnet  bkp"
        "sys vms  logs  notif";}
 .card{background:linear-gradient(180deg,var(--card),var(--card2));border:1px solid var(--line);
       border-radius:11px;padding:12px 14px;overflow:hidden;position:relative;
@@ -219,6 +219,37 @@ button.pill:hover{border-color:var(--fg)}
 #stale{position:fixed;inset:0;background:rgba(8,11,17,.94);display:none;
        align-items:center;justify-content:center;color:var(--warn);font-size:19px;z-index:9}
 
+#cores{display:grid;grid-template-columns:repeat(6,1fr);gap:3px;margin-top:7px}
+.core{background:#070c12;border:1px solid var(--line2);border-radius:4px;
+      position:relative;overflow:hidden;height:29px;
+      display:flex;align-items:center;justify-content:center}
+/* ── tailnet ──────────────────────────────────────────────────── */
+#tnet{grid-area:tnet}
+#tnwrap{flex:1;display:grid;grid-template-columns:3fr minmax(0,1fr);gap:12px;min-height:0}
+#msvg{width:100%;height:100%;min-height:0}
+#tndetail{background:var(--box);border:1px solid var(--line2);border-radius:8px;
+          padding:9px 10px;overflow-y:auto;font-size:10.5px;
+          scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.dh{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);
+    margin-bottom:5px}
+.drow{margin-bottom:8px;padding-bottom:7px;border-bottom:1px solid var(--line2)}
+.edge{fill:none;stroke-linecap:round}
+.e-direct{stroke:var(--good);stroke-width:1.9;opacity:.8}
+.e-relay{stroke:var(--warn);stroke-width:1.9;stroke-dasharray:6 5;opacity:.85;
+         animation:flow 1.4s linear infinite}
+.e-off{stroke:var(--dim);stroke-width:1.1;stroke-dasharray:2 5;opacity:.5}
+.ico{fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.hull{fill:var(--fg);fill-opacity:.035;stroke:var(--fg);stroke-opacity:.22;
+      stroke-width:1;stroke-dasharray:4 4}
+.hull-l{fill:var(--fg);font-size:9px;opacity:.45;letter-spacing:.1em}
+.nlbl{fill:var(--fg);font-size:11.5px;font-weight:600}
+.nlink{font-size:9.5px}
+.ctrs{margin-top:8px;border-top:1px solid var(--line2);padding-top:7px;
+      display:flex;flex-wrap:wrap;gap:4px}
+.ctrs{margin-top:8px;border-top:1px solid var(--line2);padding-top:7px;
+      display:flex;flex-wrap:wrap;gap:4px}
+@keyframes flow{to{stroke-dashoffset:-11}
+
 /* ── the interval picker ──────────────────────────────────────── */
 #iv{font:inherit;font-size:11.5px;background:#0b1118;color:var(--fg);
     border:1px solid var(--line);border-radius:99px;padding:5px 9px}
@@ -228,8 +259,8 @@ button.pill:hover{border-color:var(--fg)}
   #app{grid-template-columns:320px minmax(0,1fr) minmax(0,1.2fr);
        grid-template-areas:
          "top top  top"
-         "sys vms  logs"
-         "sys bkp  notif";}
+         "sys vms  tnet"
+         "sys logs notif";}
 }
 
 /* ── tablets ──────────────────────────────────────────────────── */
@@ -240,6 +271,7 @@ button.pill:hover{border-color:var(--fg)}
          "top  top"
          "sys  vms"
          "sys  notif"
+         "tnet tnet"
          "logs bkp";}
 }
 
@@ -254,7 +286,7 @@ button.pill:hover{border-color:var(--fg)}
   #app{height:auto;min-height:100vh;gap:8px;padding:8px;
        grid-template-columns:minmax(0,1fr);
        grid-template-rows:none;
-       grid-template-areas:"top" "notif" "vms" "sys" "bkp" "logs";}
+       grid-template-areas:"top" "notif" "vms" "sys" "tnet" "bkp" "logs";}
   .card{overflow:visible;padding:11px 12px;border-radius:12px}
   .scroll{overflow:visible;max-height:none}
 
@@ -288,6 +320,8 @@ button.pill:hover{border-color:var(--fg)}
   .vrow{grid-template-columns:34px minmax(0,1fr) auto;gap:7px}
   .vrow .rt{grid-column:2 / -1;text-align:left;color:var(--dim);font-size:10px}
 
+  #tnwrap{grid-template-columns:minmax(0,1fr);grid-template-rows:240px auto;gap:9px}
+  #cores{grid-template-columns:repeat(4,1fr)}
   .lgh,.lg{grid-template-columns:44px 58px minmax(0,1fr)}
   .lgh span:nth-child(3),.lg .who{display:none}
   #logs .scroll,#notif .scroll{max-height:none}
@@ -295,6 +329,7 @@ button.pill:hover{border-color:var(--fg)}
 
 /* ── narrow phones ───────────────────────────────────────────── */
 @media (max-width:380px){
+  #cores{grid-template-columns:repeat(3,1fr)}
   #pills{display:grid;grid-template-columns:1fr 1fr;gap:5px}
   .pill{justify-content:center}
   .stats{grid-template-columns:minmax(0,1fr)}
@@ -336,7 +371,17 @@ button.pill:hover{border-color:var(--fg)}
         <div class="big mono"><span id="cpu_v">0.0</span><small>%</small>
           <span class="side">load <b id="cpu_load">—</b></span></div>
         <svg class="chart" id="c_cpu" height="48" preserveAspectRatio="none"></svg>
+        <div id="cores"></div>
         <div class="stats" id="cpu_stats"></div>
+      </div>
+
+      <div class="blk" id="gpu_blk" style="display:none">
+        <div class="bh"><span class="l" style="color:var(--gpu)">gpu</span>
+          <span class="hw" id="gpu_hw">—</span></div>
+        <div class="big mono"><span id="gpu_v">0</span><small>%</small>
+          <span class="side">temp <b id="gpu_t">—</b></span></div>
+        <svg class="chart" id="c_gpu" height="42" preserveAspectRatio="none"></svg>
+        <div class="stats" id="gpu_stats"></div>
       </div>
 
       <div class="blk">
@@ -375,6 +420,14 @@ button.pill:hover{border-color:var(--fg)}
     <div class="scroll" id="glist"></div>
   </div>
 
+  <div id="tnet" class="card">
+    <div class="t">tailnet</div>
+    <div id="tnwrap">
+      <svg id="msvg" preserveAspectRatio="xMidYMid meet"></svg>
+      <div id="tndetail"></div>
+    </div>
+  </div>
+
   <div id="logs" class="card">
     <div class="t">logs</div>
     <div class="lgh"><span>time</span><span>type</span><span>who</span><span>what</span></div>
@@ -405,6 +458,7 @@ const LS_KEY = "watch.interval";
 
 let seq = 0, timer = null, lastOk = 0, tab = "all", myBuild = null;
 const hist = [];
+const gpuHist = [];
 const HIST_MAX = 600;
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c =>
@@ -597,6 +651,125 @@ function renderAlerts(d) {
     : `<div class="ok-note">✔ nothing needs doing</div>`;
 }
 
+
+// ── panels fed by the hypervisor's local exporter ──────────────────
+// Each one hides itself when its data is absent. The exporter being down is a
+// normal state, not an error state, and an empty card that looks broken is
+// worse than no card.
+
+function renderCores(L) {
+  const el = $("cores");
+  const cores = (L && L.cores) || [];
+  el.style.display = cores.length ? "" : "none";
+  if (!cores.length) return;
+  el.innerHTML = cores.map((v, i) =>
+    `<div class="core"><i style="height:${Math.min(100, v)}%;background:var(--cpu)"></i>
+       <u>${i}</u><span>${Math.round(v)}</span></div>`).join("");
+}
+
+function renderGpu(L) {
+  const g = L && L.gpu;
+  $("gpu_blk").style.display = g ? "" : "none";
+  if (!g) return;
+  $("gpu_hw").textContent = [g.name, g.driver].filter(Boolean).join(" · ");
+  $("gpu_v").textContent = g.busy;
+  $("gpu_t").textContent = g.temp ? g.temp + " °C" : "—";
+  gpuHist.push(g.busy);
+  if (gpuHist.length > HIST_MAX) gpuHist.shift();
+  chart($("c_gpu"), gpuHist, "var(--gpu)", 100);
+  $("gpu_stats").innerHTML =
+    `<div><span>vram</span><b>${bytes(g.vram_used)} / ${bytes(g.vram_total)}</b></div>` +
+    `<div><span>power</span><b>${g.watts ? g.watts + " W" : "—"}</b></div>` +
+    `<div><span>core clock</span><b>${g.sclk ? g.sclk + " MHz" : "—"}</b></div>` +
+    `<div><span>fan</span><b>${g.fan_rpm ? g.fan_rpm + " rpm" : "—"}</b></div>`;
+}
+
+function renderTemps(L) {
+  const t = (L && L.cpu_temps) || [];
+  if (!t.length) return;
+  // Appended to the cpu stats rather than given a row of its own: it is the
+  // same resource, and on this part there are exactly two sensors.
+  $("cpu_stats").innerHTML += t.map(x =>
+    `<div><span>${esc(x.label)}</span><b>${x.c} °C</b></div>`).join("");
+}
+
+// ── the tailnet map ────────────────────────────────────────────────
+// A radial layout, not a force simulation: with a dozen nodes the physics only
+// makes the picture move between refreshes, and a map that will not hold still
+// is harder to read than one that is slightly less balanced.
+
+const ICONS = {
+  server: "M3 5h14v4H3z M3 11h14v4H3z", vm: "M4 4h12v12H4z M7 8h6v4H7z",
+  pi: "M4 4h12v12H4z M8 2v2 M12 2v2 M8 16v2 M12 16v2",
+  laptop: "M4 5h12v7H4z M2 14h16", phone: "M6 2h8v16H6z M9 15h2",
+  desktop: "M3 4h14v9H3z M7 17h6 M10 13v4",
+};
+
+function renderTailnet(L) {
+  const tn = (L && L.tailnet) || {};
+  const nodes = tn.nodes || [];
+  const svg = $("msvg"), detail = $("tndetail");
+  if (!nodes.length) {
+    svg.innerHTML = "";
+    detail.innerHTML = `<div class="dh">tailnet</div>
+      <div class="drow"><span class="ex">${tn.ok === false && L && L.ok
+        ? "tailscale is not running on the hypervisor"
+        : "no data — the hypervisor exporter is unreachable"}</span></div>`;
+    return;
+  }
+
+  const W = 320, H = 240, cx = W / 2, cy = H / 2;
+  const self = nodes.find(n => n.self) || nodes[0];
+  const kids = nodes.filter(n => n.parent);            // this host's own guests
+  const peers = nodes.filter(n => !n.self && !n.parent);
+
+  const pos = new Map();
+  pos.set(self.id, [cx, cy]);
+  // Guests orbit the hypervisor closely; everything else sits on the outer
+  // ring. That is the only containment relationship this data actually knows.
+  kids.forEach((n, i) => {
+    const a = (i / Math.max(1, kids.length)) * Math.PI * 2 - Math.PI / 2;
+    pos.set(n.id, [cx + Math.cos(a) * 46, cy + Math.sin(a) * 46]);
+  });
+  peers.forEach((n, i) => {
+    const a = (i / Math.max(1, peers.length)) * Math.PI * 2 - Math.PI / 2;
+    pos.set(n.id, [cx + Math.cos(a) * 96, cy + Math.sin(a) * 96]);
+  });
+
+  const edge = (n) => {
+    const [x, y] = pos.get(n.id) || [cx, cy];
+    const cls = n.link === "direct" ? "e-direct" : n.link === "relay" ? "e-relay" : "e-off";
+    return `<path class="edge ${cls}" d="M${cx},${cy} L${x},${y}"/>`;
+  };
+  const glyph = (n) => {
+    const [x, y] = pos.get(n.id) || [cx, cy];
+    const col = n.self ? "var(--fg)" : n.online ? "var(--good)" : "var(--dim)";
+    const d = ICONS[n.kind] || ICONS.desktop;
+    return `<g transform="translate(${x - 10},${y - 10})">
+        <path class="ico" d="${d}" stroke="${col}" transform="scale(1)"/></g>
+      <text class="nlbl" x="${x}" y="${y + 21}" text-anchor="middle"
+        fill="${n.online ? "var(--fg)" : "var(--dim)"}">${esc(n.name)}</text>`;
+  };
+
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.innerHTML =
+    `<circle cx="${cx}" cy="${cy}" r="46" class="hull"/>` +
+    nodes.filter(n => !n.self).map(edge).join("") +
+    nodes.map(glyph).join("");
+
+  const order = { self: 0, direct: 1, relay: 2, offline: 3 };
+  detail.innerHTML = `<div class="dh">${nodes.length} nodes` +
+    (tn.relays && tn.relays.length ? ` · relay ${esc(tn.relays.join(", "))}` : "") +
+    `</div>` +
+    nodes.slice().sort((a, b) => (order[a.link] ?? 9) - (order[b.link] ?? 9))
+      .map(n => `<div class="drow">
+        <div class="nm"><span style="color:${n.online ? "var(--good)" : "var(--dim)"}">●</span>
+          ${esc(n.name)}</div>
+        <div class="dns">${esc(n.ip)}</div>
+        <div class="ex">${esc(n.link)}${n.relay ? " · " + esc(n.relay) : ""}</div>
+      </div>`).join("");
+}
+
 function clock() {
   const d = new Date();
   $("clock").textContent = d.toTimeString().slice(0, 8);
@@ -608,6 +781,8 @@ function render(d) {
   const s = d.latest;
   if (!s || !s.host) return;
   renderTop(s); renderSys(s); renderGuests(s);
+  const L = s.local || {};
+  renderCores(L); renderGpu(L); renderTemps(L); renderTailnet(L);
   renderLogs(s); renderJobs(s); renderAlerts(d);
   $("stale").style.display =
     (Date.now() / 1000 - (s.generated || 0)) > 300 ? "flex" : "none";

@@ -106,3 +106,13 @@ ntfy_publisher_user: publisher
 # and the hypervisor's `pve_screen` role points the physically-attached monitor
 # at it — two different machines that must not disagree about the address.
 watch_domain: "watch.{{ tailnet_base_domain }}"
+
+# ── The hypervisor's local exporter ──────────────────────────────────
+#
+# The port it serves on. Declared here because two machines need it: the
+# hypervisor binds it, and the watch guest builds its fetch URL from it.
+#
+# Bound to the hypervisor's TAILNET address only — see roles/pve_exporter. It
+# is read-only and has no actions, which is why it needs no credential: reaching
+# it already means being on the tailnet.
+exporter_port: 9099

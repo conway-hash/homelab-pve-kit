@@ -214,6 +214,50 @@ kiosk_net_primary: vmbr0
 # group cannot read another group's vars, so it moved to
 # group_vars/all/vars.yml — see rule 1: one fact, one declaration point.
 
+# ── The local exporter ───────────────────────────────────────────────
+#
+# The five things the Proxmox API cannot answer for — per-core CPU, CPU
+# temperature, GPU, the tailnet, and what each guest's memory is REALLY doing.
+# Read-only, bound to this host's tailnet address, consumed by the watch guest.
+#
+# Whether it runs at all is service_enabled.watch: it exists only to feed that
+# dashboard, so a homelab without one should not be running it.
+
+exporter_dir: /opt/pve-exporter
+
+# exporter_port is NOT here. The watch guest builds its fetch URL from it and a
+# group cannot read another group's vars, so it lives in group_vars/all/vars.yml
+# with the other facts more than one machine needs — the same trap pve_node,
+# ntfy_domain and watch_domain each fell into.
+
+# Local /proc and /sys reads cost nothing, and this is what makes a per-core
+# graph look like a line rather than a staircase.
+exporter_interval: 2
+
+# Guest introspection forks a process inside each running guest through the
+# QEMU agent, so it is the most expensive thing the exporter does and the answer
+# changes slowly.
+exporter_guest_interval: 20
+
+# The GPU's real product name. PCI ID 1002:67df is shared by the whole
+# RX 470/480/570/580/590 family, so no amount of reading sysfs can narrow it
+# down. Empty shows whatever the PCI database says.
+exporter_gpu_name: "Sapphire Nitro+ Radeon RX 580 4GB"
+
+# fnmatch patterns for tailnet names to leave off the graph. CI joins as an
+# ephemeral node for the length of a deploy and headscale reaps it afterwards.
+exporter_tailnet_hide:
+  - "gh-runner-*"
+  - "gh-check-*"
+
+# What each tailnet node physically IS, where the exporter cannot work it out.
+# It already knows it is the server and that a peer matching one of its guests
+# is a VM; Tailscale's data separates a phone from everything else and stops,
+# because a laptop, a Pi and a hypervisor all report "linux".
+exporter_node_kinds:
+  cachyos-laptop: laptop
+  homeassistant: pi
+
 # ── Backups ──────────────────────────────────────────────────────────
 #
 # The jobs themselves are derived from pve_guests below — each guest carries

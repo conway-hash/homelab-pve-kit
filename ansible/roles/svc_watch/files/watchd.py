@@ -113,6 +113,11 @@ CONTROL_TOKEN = env("WATCH_CONTROL_TOKEN", "")
 # unset — the pill just reports unknown.
 CONTROL_URL = env("WATCH_CONTROL_URL", "").rstrip("/")
 
+# The hypervisor's local exporter. Everything it supplies degrades cleanly when
+# it is unreachable — those panels go quiet and the rest of the page is
+# unaffected — so this is deliberately not required.
+EXPORTER_URL = env("WATCH_EXPORTER_URL", "").rstrip("/")
+
 LISTEN_PORT = env_int("WATCH_PORT", 8080)
 
 # ── Sampling ──
@@ -281,6 +286,23 @@ def cert_days_left(host, port=443, timeout=8):
     except ValueError:
         return None
     return (expires - datetime.now(timezone.utc)).total_seconds() / 86400
+
+
+def fetch_exporter():
+    """The hypervisor-local facts, or None.
+
+    Never fatal. If the exporter is down the dashboard loses per-core CPU, GPU,
+    temperatures, the tailnet map and real guest memory, and keeps everything
+    else — which is most of it. A monitor that blanks itself because one of its
+    sources is missing is worse than one that shows less.
+    """
+    if not EXPORTER_URL:
+        return None
+    try:
+        with urllib.request.urlopen(EXPORTER_URL, timeout=8) as r:
+            return json.loads(r.read().decode())
+    except (urllib.error.URLError, socket.timeout, OSError, json.JSONDecodeError):
+        return None
 
 
 def tcp_reachable(host, port=443, timeout=4):
@@ -626,6 +648,7 @@ def collect():
                 newer.append(f"{pkg} ({v.get('Version')})")
     state["reboot_pending"] = bool(newer)
     state["reboot_for"] = sorted(set(newer))[:5]
+    state["reboot_source"] = "kernel versions"
     state["running_kernel"] = running_kernel
 
     # ── recent node activity, for the log panel ──
@@ -659,6 +682,63 @@ def collect():
             "keep": (j.get("prune-backups") or ""),
         })
     state["backup_jobs"] = jobs
+
+    # ── what only the hypervisor can see ──
+    #
+    # Read-only, from the local exporter. Absent is a normal state, not an
+    # error: the panels it feeds simply have nothing to draw.
+    ex = fetch_exporter()
+    state["local"] = {
+        "ok": ex is not None,
+        "cores": (ex or {}).get("cores") or [],
+        "cpu_temps": (ex or {}).get("cpu_temps") or [],
+        "gpu": (ex or {}).get("gpu"),
+        "tailnet": (ex or {}).get("tailnet") or {"ok": False, "nodes": []},
+        "failed_units": (ex or {}).get("failed_units") or [],
+    }
+
+    # ⚠️ Correcting the memory figure, which is the whole reason the exporter
+    # reads inside the guests.
+    #
+    # Proxmox reports the host-side RSS of each QEMU process, and the Linux
+    # kernel fills otherwise-idle RAM with page cache — so total-minus-free
+    # counts reclaimable cache as consumption and every guest sits at 90-100%
+    # within hours of booting. Measured here the same instant: Proxmox said the
+    # watch guest was at 95.6%, /proc/meminfo inside it said 27%.
+    #
+    # A number that is always red tells you nothing and trains you to ignore the
+    # panel it is in, so where the agent can answer, the agent wins. `source`
+    # travels with it: the page says which it is showing rather than quietly
+    # mixing two different meanings of "used".
+    gmem = (ex or {}).get("guest_memory") or {}
+    for g in guests:
+        real = gmem.get(str(g["vmid"]))
+        if real and real.get("total"):
+            g["memory"] = {
+                "used": real["used"],
+                "total": real["total"],
+                "pct": _pct(real["used"], real["total"]),
+                "source": "agent",
+            }
+        else:
+            g["memory"]["source"] = "host-rss"
+
+    # /var/run/reboot-required is the flag Debian itself sets, and the exporter
+    # can read it. Inferring from kernel versions is a good approximation and
+    # stays as the fallback, but it is still an inference.
+    reb = (ex or {}).get("reboot") or {}
+    if ex is not None and "required" in reb:
+        state["reboot_pending"] = bool(reb["required"])
+        state["reboot_for"] = reb.get("packages") or state.get("reboot_for") or []
+        state["reboot_source"] = "/var/run/reboot-required"
+
+    # The exporter sees every failed systemd unit; the API sees only the
+    # Proxmox-relevant set. Prefer the fuller answer when it is available.
+    if state["local"]["ok"] and state["local"]["failed_units"]:
+        known = {f["name"] for f in state["failed_services"]}
+        for unit in state["local"]["failed_units"]:
+            if unit not in known:
+                state["failed_services"].append({"name": unit, "state": "failed"})
 
     # ── reachability, for the header pills ──
     state["reach"] = {

@@ -34,6 +34,13 @@
     # first run of a new service that is exactly the situation.
     - pve_guests
 
+    # The handful of facts only this box can see — per-core CPU, temperatures,
+    # GPU, the tailnet, real guest memory. Gated on `watch` rather than having
+    # a switch of its own: it exists solely to feed that dashboard, and a
+    # hypervisor without one has no reason to run it.
+    - role: pve_exporter
+      when: service_enabled.watch | bool
+
     # Points the physically-attached monitor at the watch dashboard, and
     # removes what the retired kiosk left behind. Last, because it reads
     # watch_domain and reaching it only makes sense once the guests exist.
