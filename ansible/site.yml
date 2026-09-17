@@ -34,16 +34,16 @@
     # first run of a new service that is exactly the situation.
     - pve_guests
 
-    # The handful of facts only this box can see — per-core CPU, temperatures,
-    # GPU, the tailnet, real guest memory. Gated on `watch` rather than having
-    # a switch of its own: it exists solely to feed that dashboard, and a
-    # hypervisor without one has no reason to run it.
-    - role: pve_exporter
-      when: service_enabled.watch | bool
+    # The dashboard, back where it can see what it draws. Per-core CPU,
+    # temperatures, GPU, the tailnet map and real guest memory all come from
+    # /proc, /sys, `tailscale` and `qm guest exec` — none of them are in the
+    # Proxmox API at any privilege level, so a copy on a guest could only ever
+    # be a subset. Serving the page from the same process that collects is also
+    # what keeps it identical to the one this repo already had.
+    - role: pve_kiosk
+      when: service_enabled.kiosk | bool
 
-    # Points the physically-attached monitor at the watch dashboard, and
-    # removes what the retired kiosk left behind. Last, because it reads
-    # watch_domain and reaching it only makes sense once the guests exist.
+    # Points the physically-attached monitor at it.
     - role: pve_screen
       when: service_enabled.screen | bool
 

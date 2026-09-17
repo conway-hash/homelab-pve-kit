@@ -61,12 +61,9 @@ pve_repositories:
 # group_vars/all/services.yml with every other service's switch. These are its
 # settings, which are only consulted once it is on.
 
-# Localhost only. Nothing about this is meant to be reachable off-box, so
-# the port never leaves 127.0.0.1 and no firewall rule is needed. This is
-# also why the control endpoints (approve an upgrade, reboot) need no
-# authentication: reaching them means you are already root on this box or
-# standing in front of the screen it drives.
-kiosk_port: 8099
+# kiosk_port is NOT declared here. The watch guest's Caddy proxies to it, and a
+# group cannot read another group's vars, so it lives in group_vars/all/vars.yml
+# with the other facts more than one machine needs.
 kiosk_dir: /opt/kiosk
 
 # Also serve the dashboard on this host's tailnet address, so it can be read
@@ -214,49 +211,20 @@ kiosk_net_primary: vmbr0
 # group cannot read another group's vars, so it moved to
 # group_vars/all/vars.yml — see rule 1: one fact, one declaration point.
 
-# ── The local exporter ───────────────────────────────────────────────
+# ── Who may press the dashboard's upgrade and reboot buttons ─────────
 #
-# The five things the Proxmox API cannot answer for — per-core CPU, CPU
-# temperature, GPU, the tailnet, and what each guest's memory is REALLY doing.
-# Read-only, bound to this host's tailnet address, consumed by the watch guest.
+# "local"   — 127.0.0.1 only. The default, and what this has always been:
+#             upgrading or rebooting means being root on this box, or standing
+#             in front of the monitor wired to it.
+# "tailnet" — anywhere the page opens, which is what makes the buttons work
+#             from a phone.
 #
-# Whether it runs at all is service_enabled.watch: it exists only to feed that
-# dashboard, so a homelab without one should not be running it.
-
-exporter_dir: /opt/pve-exporter
-
-# exporter_port is NOT here. The watch guest builds its fetch URL from it and a
-# group cannot read another group's vars, so it lives in group_vars/all/vars.yml
-# with the other facts more than one machine needs — the same trap pve_node,
-# ntfy_domain and watch_domain each fell into.
-
-# Local /proc and /sys reads cost nothing, and this is what makes a per-core
-# graph look like a line rather than a staircase.
-exporter_interval: 2
-
-# Guest introspection forks a process inside each running guest through the
-# QEMU agent, so it is the most expensive thing the exporter does and the answer
-# changes slowly.
-exporter_guest_interval: 20
-
-# The GPU's real product name. PCI ID 1002:67df is shared by the whole
-# RX 470/480/570/580/590 family, so no amount of reading sysfs can narrow it
-# down. Empty shows whatever the PCI database says.
-exporter_gpu_name: "Sapphire Nitro+ Radeon RX 580 4GB"
-
-# fnmatch patterns for tailnet names to leave off the graph. CI joins as an
-# ephemeral node for the length of a deploy and headscale reaps it afterwards.
-exporter_tailnet_hide:
-  - "gh-runner-*"
-  - "gh-check-*"
-
-# What each tailnet node physically IS, where the exporter cannot work it out.
-# It already knows it is the server and that a peer matching one of its guests
-# is a VM; Tailscale's data separates a phone from everything else and stops,
-# because a laptop, a Pi and a hypervisor all report "linux".
-exporter_node_kinds:
-  cachyos-laptop: laptop
-  homeassistant: pi
+# ⚠️ Changing this to "tailnet" promotes "on the VPN" to "may reboot the
+# hypervisor". Every device on the tailnet is one you own and each button holds
+# for 1.4 seconds before firing, but it is still the widest permission in this
+# repo — which is why flipping it is a deliberate edit rather than the default.
+# See the reasoning next to CONTROL_REACH in roles/pve_kiosk.
+kiosk_control_reach: tailnet
 
 # ── Backups ──────────────────────────────────────────────────────────
 #

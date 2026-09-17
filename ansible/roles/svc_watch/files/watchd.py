@@ -687,19 +687,21 @@ def collect():
     #
     # Read-only, from the local exporter. Absent is a normal state, not an
     # error: the panels it feeds simply have nothing to draw.
+    # The kiosk's slow tier. It is the dashboard's own collector, so reusing it
+    # means there is exactly one place that knows how to read a guest's real
+    # memory — rather than two implementations free to disagree about the
+    # number an alert fires on.
     ex = fetch_exporter()
     state["local"] = {
         "ok": ex is not None,
-        "cores": (ex or {}).get("cores") or [],
-        "cpu_temps": (ex or {}).get("cpu_temps") or [],
-        "gpu": (ex or {}).get("gpu"),
         "tailnet": (ex or {}).get("tailnet") or {"ok": False, "nodes": []},
-        "failed_units": (ex or {}).get("failed_units") or [],
+        "failed_units": (ex or {}).get("failed", []) or [],
     }
 
     # What is running inside each guest, attached to the guest it belongs to so
     # the page does not have to join two lists.
-    gctr = (ex or {}).get("guest_containers") or {}
+    gctr = {str(kg.get("vmid")): (kg.get("containers") or [])
+            for kg in ((ex or {}).get("guests") or [])}
     for g in guests:
         g["containers"] = gctr.get(str(g["vmid"]), [])
 
@@ -716,7 +718,15 @@ def collect():
     # panel it is in, so where the agent can answer, the agent wins. `source`
     # travels with it: the page says which it is showing rather than quietly
     # mixing two different meanings of "used".
-    gmem = (ex or {}).get("guest_memory") or {}
+    # The kiosk reports each guest already carrying the agent-sourced figure,
+    # so this is a lookup by vmid rather than a second collection.
+    gmem = {}
+    for kg in ((ex or {}).get("guests") or []):
+        mem = kg.get("memory") or {}
+        if mem.get("source") == "agent" and mem.get("total"):
+            gmem[str(kg.get("vmid"))] = {
+                "used": mem.get("used", 0), "total": mem.get("total", 0),
+            }
     for g in guests:
         real = gmem.get(str(g["vmid"]))
         if real and real.get("total"):
@@ -732,10 +742,9 @@ def collect():
     # /var/run/reboot-required is the flag Debian itself sets, and the exporter
     # can read it. Inferring from kernel versions is a good approximation and
     # stays as the fallback, but it is still an inference.
-    reb = (ex or {}).get("reboot") or {}
-    if ex is not None and "required" in reb:
-        state["reboot_pending"] = bool(reb["required"])
-        state["reboot_for"] = reb.get("packages") or state.get("reboot_for") or []
+    if ex is not None and "reboot_required" in ex:
+        state["reboot_pending"] = bool(ex["reboot_required"])
+        state["reboot_for"] = ex.get("reboot_pkgs") or state.get("reboot_for") or []
         state["reboot_source"] = "/var/run/reboot-required"
 
     # The exporter sees every failed systemd unit; the API sees only the

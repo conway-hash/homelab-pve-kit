@@ -20,9 +20,16 @@
 # default), a bare `services` would be shadowed the moment any play gathers
 # service facts.
 service_enabled:
+  # The dashboard itself, on the hypervisor. It runs there because that is the
+  # only place per-core CPU, temperatures, GPU, the tailnet and real guest
+  # memory can be read at all — see docs/kiosk.md.
+  #
+  # Reachable at http://pve.<tailnet>:8099, which is what the phone opens.
+  kiosk: true
+
   # Runs ON the hypervisor. The monitor is physically wired to that box, so
   # there is no guest to create — this is purely a role toggle. All it does is
-  # point a browser at the watch dashboard. See docs/screen.md.
+  # point a browser at the dashboard. See docs/screen.md.
   #
   screen: true
 

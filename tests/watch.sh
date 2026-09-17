@@ -74,15 +74,28 @@ else
   fi
 fi
 
-# The control endpoints power-cycle real machines. Unauthenticated callers must
-# be refused — tailnet membership is not authorisation.
+# The dashboard's buttons run `apt-get dist-upgrade` and `systemctl reboot` on
+# the hypervisor, so the guard in front of them is worth asserting.
+#
+# A cross-origin form post cannot set a custom header, so requiring X-Kiosk is
+# what stops any page you happen to open from posting here on your behalf.
+# Without the header it must be refused, whatever kiosk_control_reach is set to.
 CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
   -X POST -H 'Content-Type: application/json' \
-  -d '{"action":"reboot-node"}' "https://${DOMAIN}/api/control")
-if [ "$CODE" = "401" ] || [ "$CODE" = "503" ]; then
-  echo "OK: unauthenticated control is refused (HTTP $CODE)"
+  -d '{"action":"reboot"}' "https://${DOMAIN}/api/do")
+if [ "$CODE" = "403" ] || [ "$CODE" = "400" ] || [ "$CODE" = "404" ]; then
+  echo "OK: a request without the X-Kiosk header is refused (HTTP $CODE)"
 else
-  echo "::error::POST /api/control without a token returned HTTP ${CODE}, expected 401 (or 503 when controls are disabled) — anything on the tailnet can reboot the hypervisor"
+  echo "::error::POST /api/do without X-Kiosk returned HTTP ${CODE}, expected 403 — any page you open could reboot the hypervisor"
+  FAILED=1
+fi
+
+# And the page itself is the kiosk, proxied. If this stops being true the
+# dashboard silently becomes something else.
+if curl -fsS --max-time 20 "https://${DOMAIN}/" | grep -q 'id="tnwrap"'; then
+  echo "OK: the dashboard is the kiosk page"
+else
+  echo "::error::https://${DOMAIN}/ is not serving the kiosk page — the proxy to the hypervisor is broken"
   FAILED=1
 fi
 

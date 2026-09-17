@@ -107,12 +107,12 @@ ntfy_publisher_user: publisher
 # at it — two different machines that must not disagree about the address.
 watch_domain: "watch.{{ tailnet_base_domain }}"
 
-# ── The hypervisor's local exporter ──────────────────────────────────
+# ── The dashboard ────────────────────────────────────────────────────
 #
-# The port it serves on. Declared here because two machines need it: the
-# hypervisor binds it, and the watch guest builds its fetch URL from it.
+# The port the kiosk serves on. Declared here because two machines need it: the
+# hypervisor binds it, and the watch guest's Caddy proxies to it so the page
+# gets a real name and a certificate.
 #
-# Bound to the hypervisor's TAILNET address only — see roles/pve_exporter. It
-# is read-only and has no actions, which is why it needs no credential: reaching
-# it already means being on the tailnet.
-exporter_port: 9099
+# It binds loopback and the hypervisor's tailnet address — never the LAN
+# bridge, which every device in the house sits on.
+kiosk_port: 8099

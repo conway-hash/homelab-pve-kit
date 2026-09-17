@@ -1,0 +1,188 @@
+---
+# Drives the monitor physically attached to this box. The compositor and
+# browser have to run here — a guest can't reach that screen without GPU
+# passthrough, which would hand the card to the VM and take the host
+# console with it. The data is all local anyway, so nothing is gained by
+# moving it off.
+#
+# Whether this role runs at all is service_enabled.kiosk, applied as a
+# role-level `when:` in site.yml. Deliberately NOT a per-task condition in
+# here: that is what it used to be, and it meant kiosk_enabled=false still
+# installed cage, cog and every unit while skipping only the autologin wiring
+# — a switch that looked like an off but was not one.
+
+- name: Install the kiosk stack
+  # cage is a single-purpose Wayland compositor: it runs exactly one
+  # fullscreen client, with no desktop, panel, or launcher.
+  #
+  # cog, not chromium. Debian's chromium pulls a desktop's worth of
+  # dependencies onto what is meant to be a hypervisor — 174 packages with
+  # recommends, and even with them off it still drags cups-common,
+  # system-config-printer and upower. cog is WebKit built for exactly this
+  # job and adds no daemons at all.
+  #
+  # jq is no longer needed by this role — the collector is python now — but
+  # it stays because removing a package a previous run installed is not
+  # something a role should do behind your back, and it is generally useful
+  # on a hypervisor. The same goes for mpv, alsa-utils and python3-venv,
+  # which the retired lofi stream pulled in: its units and its pinned
+  # yt-dlp are removed below, the packages are left alone.
+  #
+  # install_recommends: false matters here; chromium's numbers above were
+  # what made this worth measuring rather than assuming.
+  ansible.builtin.apt:
+    name:
+      - cage
+      - cog
+      - jq
+      - fonts-dejavu-core
+    state: present
+    install_recommends: false
+
+- name: Create the kiosk directory
+  ansible.builtin.file:
+    path: "{{ kiosk_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the sampler daemon
+  ansible.builtin.template:
+    src: kioskd.py.j2
+    dest: "{{ kiosk_dir }}/kioskd.py"
+    owner: root
+    group: root
+    mode: "0755"
+    validate: python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" %s
+  notify:
+    - Restart the kiosk daemon
+    - Show the new page on the screen
+
+- name: Install the dashboard page
+  ansible.builtin.template:
+    src: index.html.j2
+    dest: "{{ kiosk_dir }}/index.html"
+    owner: root
+    group: root
+    mode: "0644"
+  # Two handlers: the daemon and the API it serves are versioned with the
+  # page, and the browser has to be told to re-read it.
+  notify:
+    - Restart the kiosk daemon
+    - Show the new page on the screen
+
+- name: Install the systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - kiosk.service
+  notify: Reload systemd
+
+- name: Retire the units the bash collector needed
+  # collect.sh + a 10s timer + python3 -m http.server became one daemon.
+  # Left enabled, the old timer keeps rewriting a data.json nothing reads
+  # and the old web server keeps holding the port the daemon wants — the
+  # second of which is a hard failure, not just clutter.
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - kiosk-data.timer
+    - kiosk-data.service
+    - kiosk-web.service
+  failed_when: false
+
+- name: Retire the lofi stream
+  # Removing a feature from this repo does not remove it from the box:
+  # Ansible has no undo, and the timer an earlier run enabled would still
+  # fire at 20:00 tonight and start playing at a machine nobody asked. So
+  # the units are stopped and disabled explicitly rather than merely no
+  # longer written.
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop:
+    - kiosk-lofi.timer
+    - kiosk-lofi-stop.timer
+    - kiosk-lofi.service
+    - kiosk-lofi-stop.service
+  failed_when: false
+
+- name: Remove the retired unit files and the collector
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/kiosk-data.timer
+    - /etc/systemd/system/kiosk-data.service
+    - /etc/systemd/system/kiosk-web.service
+    - "{{ kiosk_dir }}/collect.sh"
+    - "{{ kiosk_dir }}/data.json"
+    - "{{ kiosk_dir }}/.netprev"
+    - /etc/systemd/system/kiosk-lofi.service
+    - /etc/systemd/system/kiosk-lofi.timer
+    - /etc/systemd/system/kiosk-lofi-stop.service
+    - /etc/systemd/system/kiosk-lofi-stop.timer
+    - "{{ kiosk_dir }}/lofi.sh"
+    - "{{ kiosk_dir }}/lofi-now"
+    # The pinned yt-dlp lived only here, so it goes with the feature.
+    - "{{ kiosk_dir }}/ytdlp"
+  notify: Reload systemd
+
+- name: Reload systemd before enabling anything it has not seen yet
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable the kiosk daemon
+  ansible.builtin.systemd_service:
+    name: kiosk.service
+    enabled: true
+    state: started
+  # Skipped in check mode, and it has to be. A dry run does not write the
+  # unit file above, so systemd has never heard of kiosk.service and this
+  # fails with "Could not find the requested service" — on the very PR that
+  # introduces it, which is the gating ansible-check job. Nothing was
+  # installed in a dry run, so there is nothing here to preview.
+  when: not ansible_check_mode
+
+- name: Point tty1 at the kiosk instead of btop
+  # tty1 already autologins root and runs btop from .bash_profile; this
+  # replaces what that line launches, keeping the same mechanism.
+  #
+  # Deliberately NOT `exec cage`: if cage or cog fails to start, the
+  # shell falls through to btop and the monitor still shows something
+  # useful instead of a bare prompt or a black screen.
+  #
+  # --enable-dev-tools is not set: there is a keyboard on this box, and a
+  # devtools window would replace the dashboard in cage's single slot.
+  ansible.builtin.blockinfile:
+    path: /root/.bash_profile
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+    marker: "# {mark} ANSIBLE MANAGED — pve_kiosk"
+    block: |
+      if [ "$(tty)" = "/dev/tty1" ]; then
+          cage -- cog "http://127.0.0.1:{{ kiosk_port }}/" || btop
+      fi
+
+- name: Remove the old bare btop autostart
+  # It lived outside the managed block, so it would otherwise still run
+  # first and the kiosk would never launch until btop was quit.
+  ansible.builtin.blockinfile:
+    path: /root/.bash_profile
+    marker: "# {mark} pre-kiosk btop"
+    state: absent
+
+- name: Strip the unmanaged btop stanza from .bash_profile
+  ansible.builtin.replace:
+    path: /root/.bash_profile
+    regexp: '(?m)^\s*if \[ "\$\(tty\)" = "/dev/tty1" \]; then\n\s*btop\n\s*fi\s*$'
+    replace: ''

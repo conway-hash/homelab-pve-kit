@@ -15,7 +15,39 @@
 		resolvers {{ acme_dns_resolvers | join(' ') }}
 	}
 
-	reverse_proxy watchd:{{ watch_port }}
+	# ── what this name actually serves ──
+	#
+	# The DASHBOARD is the kiosk, on the hypervisor. It runs there because that
+	# is the only place per-core CPU, temperatures, GPU, the tailnet and real
+	# guest memory can be read at all — a copy on this guest could only ever be
+	# a subset of it. Caddy is what gives it a real name and a certificate, so
+	# the phone opens https://{{ watch_domain }} rather than a bare
+	# host:port over plain HTTP.
+	#
+	# watchd stays on this guest and keeps doing the half that is genuinely
+	# better placed here: evaluating alerts and pushing them to ntfy, which
+	# wants to be somewhere other than the machine it reports on.
+
+	# watchd's own endpoints, matched first. /healthz is what the self-heal
+	# timer and the deploy smoke test check, so it must not be swallowed by the
+	# catch-all below.
+	handle /healthz {
+		reverse_proxy watchd:{{ watch_port }}
+	}
+	handle /api/state* {
+		reverse_proxy watchd:{{ watch_port }}
+	}
+
+	# Everything else is the kiosk: the page itself, /api/fast, /api/slow and
+	# the /api/do the buttons post to.
+	handle {
+		reverse_proxy {{ watch_pve_host }}:{{ kiosk_port }} {
+			# The page holds a long-poll open for its fast tier; Caddy's
+			# default write timeout would cut it and the graphs would stall
+			# rather than fail visibly.
+			flush_interval -1
+		}
+	}
 
 	log {
 		output file /data/access.log {

@@ -1,7 +1,0 @@
----
-# This role has no secrets. Everything it needs has a safe default or lives in
-# group_vars/pve_host/vars.yml with the rest of the hypervisor's settings.
-#
-# The exporter reads; it never writes. There is deliberately no token here,
-# because there is no endpoint worth protecting with one — see the module
-# docstring in files/exporterd.py.
