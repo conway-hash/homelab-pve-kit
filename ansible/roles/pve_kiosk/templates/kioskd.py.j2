@@ -1400,11 +1400,30 @@ def main():
         # house sits on; binding everything would publish the dashboard
         # there too, to anything that joined the wifi. Tailscale's address
         # is the one where being able to reach it already means something.
-        addr = tailnet_address()
+        # Waited for, not sampled once.
+        #
+        # This is asked at startup, and on a cold boot tailscaled is often up
+        # without an address yet — systemd considers a unit started when its
+        # process is running, which is earlier. A single check loses that race,
+        # takes the localhost-only branch, and then never looks again: the
+        # dashboard serves on loopback until somebody happens to restart it.
+        #
+        # That is exactly what happened. It bound both addresses at 11:27 after
+        # a deploy, and after the next boot logged "no tailscale0 address yet"
+        # and served loopback only — which looked like a broken reverse proxy,
+        # because from the outside it is indistinguishable from one.
+        addr = None
+        for attempt in range(30):
+            addr = tailnet_address()
+            if addr:
+                break
+            if attempt == 0:
+                print("waiting for a tailscale0 address...", flush=True)
+            time.sleep(2)
         if addr:
             binds.append(addr)
         else:
-            print("no tailscale0 address yet — serving on localhost only",
+            print("no tailscale0 address after 60s — serving on localhost only",
                   flush=True)
 
     servers = []

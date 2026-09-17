@@ -8,8 +8,13 @@
 [Unit]
 Description=Kiosk dashboard: sampler and local web server
 # pvesh talks to pmxcfs, so the guest panel is empty until this is up.
-After=pve-cluster.service network.target
-Wants=pve-cluster.service
+# tailscaled, because the dashboard also binds this host's tailnet address and
+# that address does not exist until tailscaled has one. Ordering alone is not
+# enough — systemd considers the unit started the moment the process is up, not
+# when it has an address — which is why main() also waits. Without the ordering
+# every boot starts by losing that race.
+After=pve-cluster.service network.target tailscaled.service
+Wants=pve-cluster.service tailscaled.service
 
 [Service]
 Type=simple
