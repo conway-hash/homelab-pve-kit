@@ -1,0 +1,14 @@
+# Managed by Ansible (tailscale) — edits will be overwritten.
+
+[Unit]
+Description=Check tailnet presence every {{ tailscale_selfheal_interval }}
+
+[Timer]
+# Generous on a cold boot: joining takes a moment, and a check that fires into
+# that would count a healthy startup as a failure.
+OnBootSec=4min
+OnUnitActiveSec={{ tailscale_selfheal_interval }}
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

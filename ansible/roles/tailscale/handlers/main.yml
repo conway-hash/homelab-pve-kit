@@ -1,0 +1,7 @@
+---
+# Named distinctly from every other role's handlers: handler names are
+# play-global, so anything generic would collide silently.
+
+- name: Reload systemd for the tailnet healthcheck
+  ansible.builtin.systemd_service:
+    daemon_reload: true

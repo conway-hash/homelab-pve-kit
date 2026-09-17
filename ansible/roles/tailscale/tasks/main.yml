@@ -84,3 +84,37 @@
     _tailscale_backend_state: "{{ (tailscale_state.stdout | default('{}') | from_json).BackendState | default('Stopped') }}"
   no_log: true
   changed_when: true
+
+# ── Layer 3 for the tailnet itself ───────────────────────────────────
+#
+# Every service stack here has a self-heal timer for "running but not
+# answering". tailscaled has that failure mode too, and had nothing watching
+# it — which is how the ntfy guest sat offline to every peer, twice, while
+# reporting itself perfectly healthy. See the script for the full symptom.
+
+- name: Install the tailnet self-heal script
+  ansible.builtin.template:
+    src: tailscale-healthcheck.sh.j2
+    dest: /usr/local/sbin/tailscale-healthcheck.sh
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install the tailnet self-heal unit and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - tailscale-healthcheck.service
+    - tailscale-healthcheck.timer
+  notify: Reload systemd for the tailnet healthcheck
+
+- name: Enable and start the tailnet self-heal timer
+  ansible.builtin.systemd_service:
+    name: tailscale-healthcheck.timer
+    enabled: true
+    state: started
+    daemon_reload: true

@@ -1,0 +1,9 @@
+# Managed by Ansible (tailscale) — edits will be overwritten.
+
+[Unit]
+Description=Check this machine is still present on the tailnet
+After=tailscaled.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/tailscale-healthcheck.sh

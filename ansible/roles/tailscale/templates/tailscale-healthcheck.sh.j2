@@ -1,0 +1,62 @@
+#!/bin/sh
+# Managed by Ansible (tailscale) — edits will be overwritten.
+#
+# The tailnet join is the one layer nothing was watching.
+#
+# Every service stack in this repo has a self-heal timer, because Docker
+# restarts a process that EXITS and does nothing about one that is running and
+# not answering. tailscaled has exactly that failure mode and had no cover: it
+# stays `active`, reports BackendState=Running, and is simply not reachable by
+# any peer. `tailscale status` on another node shows it offline while the
+# machine itself believes everything is fine.
+#
+# Observed twice on the ntfy guest, whose path goes cold because nothing
+# publishes to it yet: map long-polls timing out, "UDP is blocked" flapping,
+# and the node offline to every peer for minutes at a time. `systemctl restart
+# tailscaled` cleared it both times, which is the definition of a wedge rather
+# than a fault.
+#
+# ⚠️ What this deliberately does NOT do is react to a single bad probe. A node
+# that is briefly unreachable is normal — a renegotiated path, a DERP hop, a
+# sleeping laptop. Restarting tailscaled on every blip would take a working
+# tunnel down repeatedly and turn a transient into an outage.
+
+set -eu
+
+STATE=/run/tailscale-healthcheck.failures
+THRESHOLD={{ tailscale_selfheal_failures }}
+
+# Self.Online is the node's own view of whether the coordination server still
+# considers it present. It is what goes false in this wedge, while
+# BackendState stays "Running" — which is why the check is not just "is the
+# daemon up".
+ONLINE=$(tailscale status --json 2>/dev/null \
+  | python3 -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("unknown"); raise SystemExit(0)
+self_ = d.get("Self") or {}
+state = d.get("BackendState")
+# A node that is deliberately stopped is not wedged, and restarting it would
+# fight whoever stopped it.
+print("stopped" if state == "Stopped" else str(self_.get("Online")))' 2>/dev/null || echo unknown)
+
+case "$ONLINE" in
+  True|stopped)
+    rm -f "$STATE"
+    exit 0
+    ;;
+esac
+
+FAILURES=$(( $(cat "$STATE" 2>/dev/null || echo 0) + 1 ))
+echo "$FAILURES" > "$STATE"
+
+if [ "$FAILURES" -lt "$THRESHOLD" ]; then
+  echo "tailnet reports Online=$ONLINE ($FAILURES/$THRESHOLD) — not restarting yet"
+  exit 0
+fi
+
+echo "tailnet has reported Online=$ONLINE $FAILURES times running — restarting tailscaled"
+rm -f "$STATE"
+systemctl restart --no-block tailscaled.service

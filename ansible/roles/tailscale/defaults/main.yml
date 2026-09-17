@@ -17,3 +17,19 @@ tailscale_authkey: ""
 # <name>.ts.conway-hash.com. Kept short and clean regardless of how
 # verbose this repo's own name is — the two are unrelated.
 tailscale_hostname: "{{ inventory_hostname }}"
+
+# ── Self-heal ────────────────────────────────────────────────────────
+#
+# tailscaled can be `active`, report BackendState=Running, and still be
+# unreachable by every peer — the same "up but not answering" shape every
+# service stack in this repo already guards against, on the one layer all of
+# them depend on and none of them could see.
+
+# Three consecutive failures, not one. A node is briefly unreachable all the
+# time — a renegotiated path, a DERP hop — and restarting on every blip would
+# turn transients into outages.
+tailscale_selfheal_failures: 3
+
+# Long enough that three misses means minutes of genuine absence, short enough
+# that a wedge does not survive a working day.
+tailscale_selfheal_interval: "5min"
