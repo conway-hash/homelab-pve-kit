@@ -6,6 +6,12 @@ on:
     paths:
       - "ansible/**"
       - ".github/workflows/deploy.yml"
+      # The smoke tests are part of what this workflow RUNS, so a change to one
+      # has to be able to trigger it. Without this a test fix sits unexercised
+      # until something in ansible/ happens to change — which is exactly how a
+      # broken test stayed broken across three runs while its fix sat on main
+      # with no run attached to it at all.
+      - "tests/**"
   workflow_dispatch: {}
 
 permissions:
