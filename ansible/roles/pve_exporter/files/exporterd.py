@@ -269,6 +269,48 @@ def guest_meminfo(vmid):
     return None
 
 
+def guest_containers(vmid):
+    """What is actually running inside a guest.
+
+    Every service in this homelab is a compose stack, so "is the guest up" and
+    "is the thing you wanted up" are different questions — a guest can be
+    perfectly healthy with its stack stopped. The Proxmox API cannot see inside
+    a VM at all; the agent can.
+
+    `docker ps` with a Go template rather than `--format json`, because the
+    latter is a JSON OBJECT PER LINE and not a JSON array, which is a
+    distinction that bites exactly once.
+    """
+    raw = sh("qm", "guest", "exec", str(vmid), "--timeout", "8", "--",
+             "docker", "ps", "-a", "--format",
+             "{{.Names}}\t{{.State}}\t{{.Status}}\t{{.Image}}", timeout=12)
+    if not raw:
+        return []
+    try:
+        out = (json.loads(raw) or {}).get("out-data", "")
+    except ValueError:
+        return []
+    found = []
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 4:
+            continue
+        name, state, status, image = parts[0], parts[1], parts[2], parts[3]
+        low = status.lower()
+        found.append({
+            "name": name,
+            "state": state,
+            "status": status,
+            # The image WITHOUT its registry path: the tag is the useful half
+            # and the full path pushes everything else off a phone screen.
+            "image": image.split("/")[-1],
+            "ok": state == "running" and "unhealthy" not in low,
+            "health": ("unhealthy" if "unhealthy" in low else
+                       "healthy" if "healthy" in low else ""),
+        })
+    return found
+
+
 def running_vmids():
     out = []
     for line in sh("qm", "list").splitlines()[1:]:
@@ -396,11 +438,15 @@ def fast_tick():
 
 def slow_tick():
     guests = {}
+    containers = {}
     names = set()
     for vmid in running_vmids():
         mi = guest_meminfo(vmid)
         if mi:
             guests[str(vmid)] = mi
+        ctrs = guest_containers(vmid)
+        if ctrs:
+            containers[str(vmid)] = ctrs
     # Guest NAMES, for deciding which tailnet peers are this box's own VMs.
     for line in sh("qm", "list").splitlines()[1:]:
         f = line.split()
@@ -409,6 +455,7 @@ def slow_tick():
     with ST.lock:
         ST.slow = {
             "guest_memory": guests,
+            "guest_containers": containers,
             "tailnet": tailnet(names),
             "reboot": reboot_required(),
             "failed_units": failed_units(),

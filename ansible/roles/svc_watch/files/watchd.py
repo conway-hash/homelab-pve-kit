@@ -697,6 +697,12 @@ def collect():
         "failed_units": (ex or {}).get("failed_units") or [],
     }
 
+    # What is running inside each guest, attached to the guest it belongs to so
+    # the page does not have to join two lists.
+    gctr = (ex or {}).get("guest_containers") or {}
+    for g in guests:
+        g["containers"] = gctr.get(str(g["vmid"]), [])
+
     # ⚠️ Correcting the memory figure, which is the whole reason the exporter
     # reads inside the guests.
     #

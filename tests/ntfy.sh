@@ -8,6 +8,30 @@
 
 set -uo pipefail
 
+# A cold tailnet path is not a fault.
+#
+# Tailscale drops a direct path between peers that have not talked for a while
+# and renegotiates on the next packet, falling back to a DERP relay while it
+# does. Measured on the idle ntfy guest: first request 8s+ and timing out,
+# second 4.4s, third 0.12s. The busy guests never show it because their paths
+# never go cold — which is why this only ever bit the one service nothing has
+# started using yet.
+#
+# So the first reachability check warms the path and retries, and only then
+# decides. Everything after it runs on an established path and needs no retry.
+curl_warm() {
+  local url="$1" i out
+  for i in 1 2 3; do
+    if out=$(curl -fsS --max-time 20 "$url" 2>&1); then
+      printf '%s' "$out"
+      return 0
+    fi
+    sleep 3
+  done
+  printf '%s' "$out"
+  return 1
+}
+
 FAILED=0
 
 DOMAIN="ntfy.$(grep '^tailnet_base_domain:' group_vars/all/vars.yml \
@@ -19,7 +43,7 @@ SSH="ssh -i $HOME/.ssh/homelab_ci_deploy -o StrictHostKeyChecking=accept-new"
 # with a certificate that verifies against the public trust store, and ntfy is
 # awake behind it. No -k anywhere — the app refuses a certificate it cannot
 # verify, so an unverifiable one has to fail here too.
-if curl -fsS --max-time 30 "https://${DOMAIN}/v1/health" | grep -q '"healthy":true'; then
+if curl_warm "https://${DOMAIN}/v1/health" | grep -q '"healthy":true'; then
   echo "OK: ${DOMAIN} answers over verified HTTPS"
 else
   echo "::error::${DOMAIN}/v1/health did not report healthy over verified HTTPS — no alert from any service can be delivered"
