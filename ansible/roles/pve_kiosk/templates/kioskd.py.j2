@@ -1320,6 +1320,23 @@ class Handler(BaseHTTPRequestHandler):
         return self.client_address[0] in LOCAL
 
     def do_POST(self):
+        # ⚠️ Read the body FIRST, before any branch that might reject.
+        #
+        # protocol_version is HTTP/1.1, so connections are kept alive. A reply
+        # sent without consuming the request body leaves those bytes sitting in
+        # the socket, and the next request on that connection is parsed
+        # starting from them — which is not a request line, so the server
+        # answers `501 Unsupported method` to something perfectly valid.
+        #
+        # That is not theoretical. Every rejected POST here used to poison the
+        # connection behind it, and once the dashboard sat behind a reverse
+        # proxy holding one upstream connection, a single unauthorised POST
+        # made the NEXT page load fail with 501. It reproduced exactly: GET
+        # 200, POST /api/do without the header, GET 501. It read like a broken
+        # proxy and the proxy was fine.
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length > 0 else b""
+
         if self.path != "/api/do":
             self.send_json({"error": "not found"}, 404)
             return
@@ -1328,9 +1345,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("X-Kiosk") != "1":
             self.send_json({"error": "missing X-Kiosk header"}, 403)
             return
-        length = int(self.headers.get("Content-Length") or 0)
         try:
-            body = json.loads(self.rfile.read(length) or b"{}")
+            body = json.loads(raw or b"{}")
         except ValueError:
             body = {}
         name = body.get("action")
